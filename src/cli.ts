@@ -14,6 +14,8 @@
  *   bun run src/cli.ts notes <feature_id> [category]
  *   bun run src/cli.ts stats [--by-category]
  *   bun run src/cli.ts list [status] [--limit=N]
+ *
+ * Errors are logged to .autonomous/errors.txt
  */
 
 import {
@@ -25,18 +27,40 @@ import {
   getFeaturesByStatus,
   type FeatureStatus,
 } from "./db.js";
+import fs from "fs";
+import path from "path";
 
 const projectDir = process.env.AUTONOMOUS_PROJECT_DIR;
 const sessionId = parseInt(process.env.AUTONOMOUS_SESSION_ID || "0", 10);
 const MAX_RETRIES = 3;
 
+/**
+ * Log an error to .autonomous/errors.txt
+ */
+function logError(message: string, context?: Record<string, unknown>): void {
+  if (!projectDir) return;
+
+  const errorsPath = path.join(projectDir, ".autonomous", "errors.txt");
+  const timestamp = new Date().toISOString();
+  const contextStr = context ? ` | ${JSON.stringify(context)}` : "";
+  const logLine = `[${timestamp}] ${message}${contextStr}\n`;
+
+  try {
+    fs.appendFileSync(errorsPath, logLine);
+  } catch {
+    // Silently fail if we can't write to errors file
+  }
+}
+
 if (!projectDir) {
   console.error("Error: AUTONOMOUS_PROJECT_DIR not set");
+  logError("AUTONOMOUS_PROJECT_DIR not set", { args: process.argv });
   process.exit(1);
 }
 
 const [command, ...args] = process.argv.slice(2);
 
+try {
 switch (command) {
   case "status": {
     const [featureIdStr, status] = args;
@@ -44,6 +68,7 @@ switch (command) {
 
     if (isNaN(featureId)) {
       console.error("Error: Invalid feature ID");
+      logError("Invalid feature ID in status command", { featureIdStr, status, command: "status" });
       process.exit(1);
     }
 
@@ -66,6 +91,7 @@ switch (command) {
       console.error(
         `Error: Invalid status '${status}'. Use: pending, in_progress, completed`
       );
+      logError("Invalid status in status command", { featureId, status, command: "status" });
       process.exit(1);
     }
     break;
@@ -85,6 +111,7 @@ switch (command) {
         // Both null = global (default)
       } else if (arg.startsWith("--")) {
         console.error(`Error: Unknown flag '${arg}'`);
+        logError("Unknown flag in note command", { flag: arg, args, command: "note" });
         process.exit(1);
       } else if (featureId === null && !isNaN(parseInt(arg, 10))) {
         featureId = parseInt(arg, 10);
@@ -97,6 +124,7 @@ switch (command) {
 
     if (!content) {
       console.error("Error: Note content is required");
+      logError("Note content missing", { featureId, category, args, command: "note" });
       process.exit(1);
     }
 
@@ -158,6 +186,7 @@ switch (command) {
 
     if (statusFilter && !["pending", "in_progress", "completed", "failed"].includes(statusFilter)) {
       console.error(`Error: Invalid status '${statusFilter}'. Use: pending, in_progress, completed, failed`);
+      logError("Invalid status in list command", { statusFilter, args, command: "list" });
       process.exit(1);
     }
 
@@ -191,5 +220,16 @@ switch (command) {
     console.error("  notes <feature_id> [category]    - Get notes");
     console.error("  stats [--by-category]            - Show feature counts by status");
     console.error("  list [status] [--limit=N]        - List features (default: pending, limit 10)");
+    logError("Unknown command", { command, args });
     process.exit(1);
+}
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`Error: ${message}`);
+  logError(`Unhandled error: ${message}`, {
+    command,
+    args,
+    stack: error instanceof Error ? error.stack : undefined,
+  });
+  process.exit(1);
 }

@@ -20,6 +20,7 @@ import {
   endSession,
   resetOrphanedFeatures,
   hasIncompleteFeatures,
+  setFeatureStatus,
 } from "./db.js";
 import fs from "fs";
 import path from "path";
@@ -189,6 +190,12 @@ export async function runAutonomousAgent({
     console.log(
       `Generated batch: ${batchFeatures.length} features ready for this session`
     );
+
+    // Mark the first feature as in_progress (orchestrator handles this for reliable tracking)
+    if (batchFeatures.length > 0 && batchFeatures[0].id !== undefined) {
+      setFeatureStatus(absoluteProjectDir, batchFeatures[0].id, "in_progress");
+      console.log(`Marked feature ${batchFeatures[0].id} as in_progress`);
+    }
     console.log();
 
     // Create session record

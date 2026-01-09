@@ -77,6 +77,7 @@ function getDbPath(projectDir: string): string {
 
 /**
  * Initialize the database and create schema if needed.
+ * Handles migrations for existing databases.
  */
 export function initDatabase(projectDir: string): Database {
   const dbPath = getDbPath(projectDir);
@@ -89,7 +90,7 @@ export function initDatabase(projectDir: string): Database {
 
   const db = new Database(dbPath);
 
-  // Create schema
+  // Create features table (base schema)
   db.exec(`
     CREATE TABLE IF NOT EXISTS features (
       id INTEGER PRIMARY KEY,
@@ -98,12 +99,62 @@ export function initDatabase(projectDir: string): Database {
       category TEXT NOT NULL DEFAULT 'uncategorized',
       testing_steps TEXT NOT NULL,
       passes INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      retry_count INTEGER NOT NULL DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE INDEX IF NOT EXISTS idx_features_category ON features(category);
     CREATE INDEX IF NOT EXISTS idx_features_passes ON features(passes);
+    CREATE INDEX IF NOT EXISTS idx_features_status ON features(status);
+  `);
+
+  // Migration: Add status column if missing (for existing databases)
+  const columns = db.query("PRAGMA table_info(features)").all() as Array<{ name: string }>;
+  const columnNames = columns.map((c) => c.name);
+
+  if (!columnNames.includes("status")) {
+    db.exec(`ALTER TABLE features ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'`);
+    db.exec(`UPDATE features SET status = 'completed' WHERE passes = 1`);
+    db.exec(`UPDATE features SET status = 'pending' WHERE passes = 0`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_features_status ON features(status)`);
+  }
+
+  if (!columnNames.includes("retry_count")) {
+    db.exec(`ALTER TABLE features ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`);
+  }
+
+  // Create notes table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      feature_id INTEGER,
+      category TEXT,
+      content TEXT NOT NULL,
+      created_by_session INTEGER,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (feature_id) REFERENCES features(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_notes_feature ON notes(feature_id);
+    CREATE INDEX IF NOT EXISTS idx_notes_category ON notes(category);
+  `);
+
+  // Create sessions table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      ended_at TEXT,
+      status TEXT DEFAULT 'running',
+      features_attempted INTEGER DEFAULT 0,
+      features_completed INTEGER DEFAULT 0,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      cost_usd REAL,
+      error_message TEXT
+    );
   `);
 
   return db;
