@@ -8,14 +8,24 @@
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import {
-  hasFailingFeatures,
   printProgressSummary,
   AUTONOMOUS_DIR,
 } from "./progress.js";
 import { getClientOptions } from "./client.js";
-import { initDatabase, getNextFeatures, getProgressStats } from "./db.js";
+import {
+  initDatabase,
+  getNextFeatures,
+  getProgressStats,
+  startSession,
+  endSession,
+  resetOrphanedFeatures,
+  hasIncompleteFeatures,
+} from "./db.js";
 import fs from "fs";
 import path from "path";
+
+// Get the template directory (where this code lives)
+const TEMPLATE_DIR = path.resolve(import.meta.dirname, "..");
 
 // Default port for autonomous agent dev servers
 export const DEFAULT_PORT = 4242;
@@ -112,6 +122,12 @@ export async function runAutonomousAgent({
   // Initialize database connection
   initDatabase(absoluteProjectDir);
 
+  // Reset any features left in 'in_progress' from crashed sessions
+  const orphaned = resetOrphanedFeatures(absoluteProjectDir);
+  if (orphaned > 0) {
+    console.log(`Reset ${orphaned} orphaned in_progress features to pending`);
+  }
+
   // Check if database has any features
   const stats = getProgressStats(absoluteProjectDir);
   if (stats.total === 0) {
@@ -153,8 +169,8 @@ export async function runAutonomousAgent({
     costUsd: 0,
   };
 
-  // Main loop - continue while there are failing features
-  while (hasFailingFeatures(absoluteProjectDir) && iteration < maxIterations) {
+  // Main loop - continue while there are incomplete features
+  while (hasIncompleteFeatures(absoluteProjectDir) && iteration < maxIterations) {
     iteration++;
 
     const sessionStart = new Date();
@@ -175,6 +191,16 @@ export async function runAutonomousAgent({
     );
     console.log();
 
+    // Create session record
+    const sessionId = startSession(absoluteProjectDir);
+
+    // Prepare environment variables for CLI commands
+    const agentEnv = {
+      AUTONOMOUS_PROJECT_DIR: absoluteProjectDir,
+      AUTONOMOUS_SESSION_ID: String(sessionId),
+      AUTONOMOUS_TEMPLATE_DIR: TEMPLATE_DIR,
+    };
+
     let sessionStats: SessionStats | null = null;
 
     try {
@@ -182,7 +208,8 @@ export async function runAutonomousAgent({
       sessionStats = await runAgentSession(
         absoluteProjectDir,
         model,
-        codingPrompt
+        codingPrompt,
+        agentEnv
       );
 
       // Accumulate stats
@@ -193,9 +220,25 @@ export async function runAutonomousAgent({
         totalStats.cacheWriteTokens += sessionStats.cacheWriteTokens;
         totalStats.costUsd += sessionStats.costUsd;
       }
+
+      // End session with stats
+      endSession(absoluteProjectDir, sessionId, {
+        status: 'completed',
+        features_attempted: batchFeatures.length,
+        features_completed: sessionStats?.outputTokens ? batchFeatures.length : 0, // rough estimate
+        input_tokens: sessionStats?.inputTokens,
+        output_tokens: sessionStats?.outputTokens,
+        cost_usd: sessionStats?.costUsd,
+      });
     } catch (error) {
       console.error(`\nSession ${iteration} encountered an error:`, error);
       console.log("Retrying after delay...");
+
+      // End session with error
+      endSession(absoluteProjectDir, sessionId, {
+        status: 'failed',
+        error_message: error instanceof Error ? error.message : String(error),
+      });
     }
 
     const sessionEnd = new Date();
@@ -223,7 +266,7 @@ export async function runAutonomousAgent({
     console.log(`${"-".repeat(60)}`);
 
     // Check if we should continue
-    if (hasFailingFeatures(absoluteProjectDir) && iteration < maxIterations) {
+    if (hasIncompleteFeatures(absoluteProjectDir) && iteration < maxIterations) {
       console.log("\n--- Auto-continuing in 3 seconds (Ctrl+C to pause) ---");
       await sleep(3000);
     }
@@ -254,7 +297,7 @@ export async function runAutonomousAgent({
   console.log(`Total cost: $${totalStats.costUsd.toFixed(2)}`);
   printProgressSummary(absoluteProjectDir);
 
-  if (!hasFailingFeatures(absoluteProjectDir)) {
+  if (!hasIncompleteFeatures(absoluteProjectDir)) {
     console.log("\nAll features passing! Project complete.");
   } else {
     console.log(`\nStopped after ${iteration} sessions.`);
@@ -274,9 +317,10 @@ export async function runAutonomousAgent({
 async function runAgentSession(
   projectDir: string,
   model: string,
-  prompt: string
+  prompt: string,
+  env: Record<string, string>
 ): Promise<SessionStats> {
-  const options = getClientOptions(projectDir, model);
+  const options = getClientOptions(projectDir, model, env);
 
   const response = query({
     prompt,

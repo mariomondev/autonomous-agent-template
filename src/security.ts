@@ -48,8 +48,8 @@ const ALLOWED_COMMANDS = new Set([
   "tsc",
   "vite",
   "next",
-  // Database
-  "sqlite3", // For updating feature status in database
+  // Database (for debugging/advanced queries; normal ops use CLI)
+  "sqlite3",
 ]);
 
 // Commands that need additional validation even when in the allowlist

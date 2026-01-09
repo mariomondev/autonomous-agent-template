@@ -26,7 +26,11 @@ const PLAYWRIGHT_TOOLS = [
 // Built-in tools
 const BUILTIN_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"];
 
-export function getClientOptions(projectDir: string, model: string) {
+export function getClientOptions(
+  projectDir: string,
+  model: string,
+  env?: Record<string, string>
+) {
   const absoluteProjectDir = path.resolve(projectDir);
 
   // Create comprehensive security settings (defense in depth)
@@ -69,6 +73,8 @@ export function getClientOptions(projectDir: string, model: string) {
   return {
     model,
     cwd: absoluteProjectDir,
+    // Pass environment variables to child processes
+    env: env ? { ...process.env, ...env } : process.env,
     // Claude Code automatically reads CLAUDE.md for project-specific instructions
     systemPrompt:
       "You are an expert full-stack developer. Follow the patterns in the existing codebase. Verify features with browser automation.",

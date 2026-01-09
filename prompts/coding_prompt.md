@@ -23,14 +23,13 @@ cat .autonomous/app_spec.txt | head -100
 # 4. Read the current batch of features for this session
 cat .autonomous/current_batch.json
 
-# 5. Read progress notes from previous sessions
-cat .autonomous/progress.txt 2>/dev/null || echo "No progress file yet"
-
-# 6. Check recent git history
+# 5. Check recent git history
 git log --oneline -10 2>/dev/null || echo "No git history"
 
-# 7. Count remaining tests
-sqlite3 .autonomous/db.sqlite "SELECT COUNT(*) FROM features WHERE passes = 0;"
+# 6. Check feature status counts
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts stats
+
+# Notes will be loaded automatically via CLI when working on features
 ```
 
 **IMPORTANT:** This project uses an existing template with established patterns. Look for:
@@ -59,22 +58,27 @@ Check if already running with `lsof -i :4242`.
 
 **MANDATORY BEFORE NEW WORK:**
 
-Run 1-2 of the feature tests marked as passing to verify they still work.
-Check passing features with:
+Run 1-2 of the feature tests marked as completed to verify they still work.
+Check completed features with:
 
 ```bash
-sqlite3 .autonomous/db.sqlite "SELECT id, name FROM features WHERE passes = 1 LIMIT 2;"
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts list completed --limit=2
 ```
 
 If you find ANY issues:
 
-- Mark that feature as failing: `sqlite3 .autonomous/db.sqlite "UPDATE features SET passes = 0 WHERE id = X;"`
+- Mark that feature for retry using the CLI (see DATABASE CLI COMMANDS section)
 - Fix all issues BEFORE moving to new features
 
 ### STEP 4: CHOOSE ONE FEATURE
 
 Look at `.autonomous/current_batch.json` to see the features assigned for this session (max 10 from the same category).
 Focus on completing ONE feature perfectly this session, then move to the next in the batch.
+
+Before starting work on a feature, mark it as in progress:
+```bash
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts status <feature_id> in_progress
+```
 
 ### STEP 5: IMPLEMENT THE FEATURE
 
@@ -125,27 +129,86 @@ Implement the chosen feature thoroughly:
 - [ ] Console errors visible
 - [ ] Loading states that never resolve
 
-### STEP 7: UPDATE DATABASE (CAREFULLY!)
+### DATABASE CLI COMMANDS
 
-**YOU CAN ONLY UPDATE THE "passes" FIELD**
+Use these commands to update feature status and add notes. **Do NOT write raw SQL for status updates.**
 
-After thorough verification, mark the feature as passing in the database:
+The template directory is available as `$AUTONOMOUS_TEMPLATE_DIR` environment variable.
 
+**Update feature status:**
 ```bash
-sqlite3 .autonomous/db.sqlite "UPDATE features SET passes = 1 WHERE id = X;"
+# Mark feature as in progress (do this BEFORE starting work)
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts status <feature_id> in_progress
+
+# Mark feature as completed (do this AFTER tests pass)
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts status <feature_id> completed
+
+# Mark feature for retry (increments retry count, auto-fails after 3)
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts status <feature_id> pending
 ```
 
-Replace `X` with the actual feature ID from `current_batch.json`.
+**Add notes for future sessions:**
+```bash
+# Add note for a specific feature
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts note <feature_id> "Found workaround for X issue"
+
+# Add note for all features in a category
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts note --category=auth "Auth requires special setup"
+
+# Add global note (all agents will see this)
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts note --global "Project uses pnpm not npm"
+```
+
+**Read notes before working on a feature:**
+```bash
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts notes <feature_id> <category>
+```
+
+**Check feature status counts:**
+```bash
+# Show summary of all feature statuses
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts stats
+
+# Show breakdown by category
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts stats --by-category
+```
+
+**List features by status:**
+```bash
+# List pending features (default)
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts list
+
+# List completed features
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts list completed
+
+# List with custom limit
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts list completed --limit=5
+```
+
+### STEP 7: UPDATE DATABASE
+
+**Use CLI commands, not raw SQL:**
+
+After thorough verification, mark the feature as completed:
+```bash
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts status <feature_id> completed
+```
+
+If the feature fails and needs retry:
+```bash
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts status <feature_id> pending
+bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts note <feature_id> "Failed because: <reason>"
+```
+
+**Note:** After 3 failed retries, a feature is automatically marked as `failed` and will not be retried.
 
 **NEVER:**
 
-- Remove tests
-- Edit test descriptions
-- Modify test steps
-- Combine or consolidate tests
-- Reorder tests
-- Modify the database schema
-- Delete features from the database
+- Remove features
+- Edit feature descriptions
+- Modify feature steps
+- Modify the database schema directly
+- Use raw SQL UPDATE commands for status changes
 
 ### STEP 8: COMMIT YOUR PROGRESS
 
@@ -164,27 +227,16 @@ Examples:
 
 **Do NOT** add multi-line descriptions or Co-Authored-By tags.
 
-### STEP 9: UPDATE PROGRESS NOTES
-
-Update `.autonomous/progress.txt` with:
-
-- What you accomplished this session
-- Which test(s) you completed
-- Any issues discovered or fixed
-- What should be worked on next
-- Current completion status (e.g., "15/50 tests passing")
-
-### STEP 10: END SESSION (AFTER 10 FEATURES OR WHEN DONE)
+### STEP 9: END SESSION (AFTER 10 FEATURES OR WHEN DONE)
 
 **STOP after completing 10 features** to keep context fresh. You can complete fewer if you encounter issues or context feels cluttered.
 
 Checklist before ending:
 
 1. Commit all working code
-2. Update .autonomous/progress.txt
-3. Update database (mark completed features as passing via SQL)
-4. Ensure no uncommitted changes
-5. Leave app in working state
+2. Update database (mark completed features using CLI)
+3. Ensure no uncommitted changes
+4. Leave app in working state
 
 **Then STOP.** The orchestrator will start a fresh session to continue.
 
@@ -209,4 +261,4 @@ Checklist before ending:
 - All features work end-to-end through the UI
 - Code follows existing project patterns
 
-**CRITICAL:** Only update the `passes` field in the database using SQL UPDATE commands. Never edit feature names, descriptions, or steps. Never modify the database schema or delete features.
+**CRITICAL:** Use the CLI commands to update feature status. Never use raw SQL for status updates. Never edit feature names, descriptions, or steps. Never modify the database schema.
