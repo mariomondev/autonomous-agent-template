@@ -1,0 +1,34 @@
+{
+  "name": "autonomous-agent-template",
+  "version": "1.0.0",
+  "description": "Minimal harness for long-running autonomous coding with Claude Agent SDK",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "build": "tsc",
+    "dev": "bun run --watch src/index.ts",
+    "test": "bun run tests/security.test.ts"
+  },
+  "keywords": [
+    "claude",
+    "ai",
+    "autonomous",
+    "coding",
+    "agent"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.2.1",
+    "shell-quote": "1.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "25.0.3",
+    "@types/shell-quote": "1.7.5",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
