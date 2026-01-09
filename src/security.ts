@@ -58,6 +58,79 @@ const SENSITIVE_COMMANDS: Record<
   (args: string[], fullCommand: string) => { allowed: boolean; reason?: string }
 > = {
   /**
+   * git - Validate commit message format
+   * Only applies to commit commands. Enforces single-line commits (can be detailed).
+   * Blocks: heredocs, Co-Authored-By, Feature: references, multi-line messages
+   */
+  git: (_args, fullCommand) => {
+    // Only validate commit commands
+    if (!fullCommand.includes("commit")) {
+      return { allowed: true };
+    }
+
+    // Block heredocs (cat <<EOF, cat <<'EOF')
+    if (fullCommand.includes("<<")) {
+      return {
+        allowed: false,
+        reason:
+          "Heredocs not allowed. Use: git commit -m \"single line message\"",
+      };
+    }
+
+    // Block Co-Authored-By tags
+    if (/co-authored-by/i.test(fullCommand)) {
+      return {
+        allowed: false,
+        reason: "Co-Authored-By tags not allowed in commits.",
+      };
+    }
+
+    // Block Feature: references
+    if (/feature:\s*#?\d+/i.test(fullCommand)) {
+      return {
+        allowed: false,
+        reason: "Feature references not allowed in commits.",
+      };
+    }
+
+    // Only allow single -m flag (one line)
+    const mFlagCount = (fullCommand.match(/-m\s/g) || []).length;
+    if (mFlagCount > 1) {
+      return {
+        allowed: false,
+        reason:
+          "Only single -m flag allowed. Use one detailed line instead of multiple -m flags.",
+      };
+    }
+
+    // Block newlines in the message
+    if (fullCommand.includes("\\n") || /\n/.test(fullCommand)) {
+      return {
+        allowed: false,
+        reason:
+          "Newlines not allowed. Use a single detailed line for the commit message.",
+      };
+    }
+
+    // Ensure commit uses -m flag (not --message with file or stdin)
+    if (
+      fullCommand.includes("commit") &&
+      !fullCommand.includes("-m") &&
+      !fullCommand.includes("--amend") &&
+      !fullCommand.includes("--no-edit")
+    ) {
+      if (!fullCommand.includes("--allow-empty")) {
+        return {
+          allowed: false,
+          reason: "Commits must use -m flag.",
+        };
+      }
+    }
+
+    return { allowed: true };
+  },
+
+  /**
    * pkill - Only allow killing dev processes
    * Must handle: pkill node, pkill -f "node server.js", pkill -9 vite
    */
