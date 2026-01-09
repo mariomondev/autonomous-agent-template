@@ -144,5 +144,5 @@ Existing Code: None (starting fresh)
 1. Review the generated spec and adjust as needed
 2. Create `.autonomous/` directory in your project
 3. Save as `.autonomous/app_spec.txt`
-4. Use the spec to generate `feature_list.json` (next step)
+4. Use the spec to generate `features.sql` (next step)
 5. Run the autonomous agent

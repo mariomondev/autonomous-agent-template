@@ -20,8 +20,8 @@ ls -la
 # 3. Read the app specification
 cat .autonomous/app_spec.txt | head -100
 
-# 4. Read the feature list to see all work
-cat .autonomous/feature_list.json | head -50
+# 4. Read the current batch of features for this session
+cat .autonomous/current_batch.json
 
 # 5. Read progress notes from previous sessions
 cat .autonomous/progress.txt 2>/dev/null || echo "No progress file yet"
@@ -30,10 +30,11 @@ cat .autonomous/progress.txt 2>/dev/null || echo "No progress file yet"
 git log --oneline -10 2>/dev/null || echo "No git history"
 
 # 7. Count remaining tests
-cat .autonomous/feature_list.json | grep '"passes": false' | wc -l
+sqlite3 .autonomous/db.sqlite "SELECT COUNT(*) FROM features WHERE passes = 0;"
 ```
 
 **IMPORTANT:** This project uses an existing template with established patterns. Look for:
+
 - CLAUDE.md for project guidance
 - Existing components and patterns to follow
 - Server actions, API routes, or other conventions already in place
@@ -41,11 +42,13 @@ cat .autonomous/feature_list.json | grep '"passes": false' | wc -l
 ### STEP 2: START DEV SERVER (IF NOT RUNNING)
 
 Start the development server on port 4242:
+
 ```bash
 PORT=4242 bun run dev
 ```
 
 Or for Next.js:
+
 ```bash
 bun run dev --port 4242
 ```
@@ -56,19 +59,27 @@ Check if already running with `lsof -i :4242`.
 
 **MANDATORY BEFORE NEW WORK:**
 
-Run 1-2 of the feature tests marked as `"passes": true` to verify they still work.
+Run 1-2 of the feature tests marked as passing to verify they still work.
+Check passing features with:
+
+```bash
+sqlite3 .autonomous/db.sqlite "SELECT id, name FROM features WHERE passes = 1 LIMIT 2;"
+```
+
 If you find ANY issues:
-- Mark that feature as `"passes": false` immediately
+
+- Mark that feature as failing: `sqlite3 .autonomous/db.sqlite "UPDATE features SET passes = 0 WHERE id = X;"`
 - Fix all issues BEFORE moving to new features
 
 ### STEP 4: CHOOSE ONE FEATURE
 
-Look at `.autonomous/feature_list.json` and find the first feature with `"passes": false`.
-Focus on completing ONE feature perfectly this session.
+Look at `.autonomous/current_batch.json` to see the features assigned for this session (max 10 from the same category).
+Focus on completing ONE feature perfectly this session, then move to the next in the batch.
 
 ### STEP 5: IMPLEMENT THE FEATURE
 
 Implement the chosen feature thoroughly:
+
 1. Write the code (frontend and/or backend as needed)
 2. Test using browser automation (see Step 6)
 3. Fix any issues discovered
@@ -80,6 +91,7 @@ Implement the chosen feature thoroughly:
 **The app runs on http://localhost:4242**
 
 **Available Playwright Tools:**
+
 - `mcp__playwright__browser_navigate` - Go to URL (use http://localhost:4242)
 - `mcp__playwright__browser_screenshot` - Capture current state
 - `mcp__playwright__browser_click` - Click elements
@@ -89,18 +101,21 @@ Implement the chosen feature thoroughly:
 - `mcp__playwright__browser_evaluate` - Run JS to check state
 
 **DO:**
+
 - Navigate to http://localhost:4242
 - Interact like a human user (click, type, scroll)
 - Take screenshots at each step
 - Verify both functionality AND visual appearance
 
 **DON'T:**
+
 - Only test with curl commands
 - Use JavaScript evaluation to bypass UI
 - Skip visual verification
 - Mark tests passing without thorough verification
 
 **UI Bug Checklist** (check screenshots for these issues):
+
 - [ ] White text on white background (contrast issues)
 - [ ] Random Unicode characters or encoding issues
 - [ ] Incorrect timestamps or dates
@@ -110,35 +125,39 @@ Implement the chosen feature thoroughly:
 - [ ] Console errors visible
 - [ ] Loading states that never resolve
 
-### STEP 7: UPDATE feature_list.json (CAREFULLY!)
+### STEP 7: UPDATE DATABASE (CAREFULLY!)
 
-**YOU CAN ONLY MODIFY ONE FIELD: "passes"**
+**YOU CAN ONLY UPDATE THE "passes" FIELD**
 
-After thorough verification, change in `.autonomous/feature_list.json`:
-```json
-"passes": false
+After thorough verification, mark the feature as passing in the database:
+
+```bash
+sqlite3 .autonomous/db.sqlite "UPDATE features SET passes = 1 WHERE id = X;"
 ```
-to:
-```json
-"passes": true
-```
+
+Replace `X` with the actual feature ID from `current_batch.json`.
 
 **NEVER:**
+
 - Remove tests
 - Edit test descriptions
 - Modify test steps
 - Combine or consolidate tests
 - Reorder tests
+- Modify the database schema
+- Delete features from the database
 
 ### STEP 8: COMMIT YOUR PROGRESS
 
 Make a **single-line** git commit (under 72 characters):
+
 ```bash
 git add .
 git commit -m "feat: [feature name]"
 ```
 
 Examples:
+
 - `feat: dashboard navigation`
 - `feat: project creation dialog`
 - `fix: empty state on projects list`
@@ -148,6 +167,7 @@ Examples:
 ### STEP 9: UPDATE PROGRESS NOTES
 
 Update `.autonomous/progress.txt` with:
+
 - What you accomplished this session
 - Which test(s) you completed
 - Any issues discovered or fixed
@@ -159,9 +179,10 @@ Update `.autonomous/progress.txt` with:
 **STOP after completing 10 features** to keep context fresh. You can complete fewer if you encounter issues or context feels cluttered.
 
 Checklist before ending:
+
 1. Commit all working code
 2. Update .autonomous/progress.txt
-3. Update .autonomous/feature_list.json (mark completed features as passing)
+3. Update database (mark completed features as passing via SQL)
 4. Ensure no uncommitted changes
 5. Leave app in working state
 
@@ -182,9 +203,10 @@ Checklist before ending:
 **Follow Existing Patterns:** This is a template-based project. Match the coding style, component patterns, and conventions already in the codebase.
 
 **Quality Bar:**
+
 - Zero console errors
 - Polished UI (check the UI bug checklist above)
 - All features work end-to-end through the UI
 - Code follows existing project patterns
 
-**CRITICAL:** Only change the `passes` field in .autonomous/feature_list.json. Never edit feature names, descriptions, or steps.
+**CRITICAL:** Only update the `passes` field in the database using SQL UPDATE commands. Never edit feature names, descriptions, or steps. Never modify the database schema or delete features.

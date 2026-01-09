@@ -48,6 +48,8 @@ const ALLOWED_COMMANDS = new Set([
   "tsc",
   "vite",
   "next",
+  // Database
+  "sqlite3", // For updating feature status in database
 ]);
 
 // Commands that need additional validation even when in the allowlist
@@ -87,8 +89,7 @@ const SENSITIVE_COMMANDS: Record<
         // Check if any allowed process is in the pattern
         const patternLower = arg.toLowerCase();
         const isAllowed = allowedProcesses.some(
-          (proc) =>
-            patternLower === proc || patternLower.startsWith(proc + " ")
+          (proc) => patternLower === proc || patternLower.startsWith(proc + " ")
         );
         if (isAllowed) {
           return { allowed: true };
@@ -114,7 +115,9 @@ const SENSITIVE_COMMANDS: Record<
       allowed: isAllowed,
       reason: isAllowed
         ? undefined
-        : `pkill only allowed for dev processes: ${allowedProcesses.join(", ")}. Got: ${targetProcess}`,
+        : `pkill only allowed for dev processes: ${allowedProcesses.join(
+            ", "
+          )}. Got: ${targetProcess}`,
     };
   },
 
@@ -314,7 +317,10 @@ export function validateBashCommand(command: string): ValidationResult {
   if (commandsWithArgs === null) {
     return {
       allowed: false,
-      reason: `Could not parse command (possible injection attempt): ${command.slice(0, 100)}`,
+      reason: `Could not parse command (possible injection attempt): ${command.slice(
+        0,
+        100
+      )}`,
     };
   }
 

@@ -13,6 +13,7 @@ import {
   AUTONOMOUS_DIR,
 } from "./progress.js";
 import { getClientOptions } from "./client.js";
+import { initDatabase, getNextFeatures, getProgressStats } from "./db.js";
 import fs from "fs";
 import path from "path";
 
@@ -87,20 +88,41 @@ export async function runAutonomousAgent({
     console.log(`Created project directory: ${absoluteProjectDir}`);
   }
 
-  // Check for .autonomous directory and feature_list.json
+  // Initialize database (creates schema if needed)
   const autonomousDir = path.join(absoluteProjectDir, AUTONOMOUS_DIR);
-  const featureListPath = path.join(autonomousDir, "feature_list.json");
+  const dbPath = path.join(autonomousDir, "db.sqlite");
 
-  if (!fs.existsSync(featureListPath)) {
-    console.error(`Error: No feature_list.json found`);
-    console.error(`Expected location: ${featureListPath}`);
+  // Check if database exists and has features
+  if (!fs.existsSync(dbPath)) {
+    console.error(`Error: No database found`);
+    console.error(`Expected location: ${dbPath}`);
     console.error("");
     console.error("Setup required:");
     console.error(`  1. Create ${AUTONOMOUS_DIR}/ directory in your project`);
     console.error(`  2. Add app_spec.txt with your project specification`);
-    console.error(`  3. Add feature_list.json with your test cases`);
+    console.error(
+      `  3. Generate features.sql using templates/feature_list_generator.md`
+    );
+    console.error(`  4. Run: sqlite3 ${dbPath} < features.sql`);
     console.error("");
     console.error("See templates/ for generator prompts and examples.");
+    process.exit(1);
+  }
+
+  // Initialize database connection
+  initDatabase(absoluteProjectDir);
+
+  // Check if database has any features
+  const stats = getProgressStats(absoluteProjectDir);
+  if (stats.total === 0) {
+    console.error(`Error: Database exists but contains no features`);
+    console.error(`Expected location: ${dbPath}`);
+    console.error("");
+    console.error("Setup required:");
+    console.error(
+      `  1. Generate features.sql using templates/feature_list_generator.md`
+    );
+    console.error(`  2. Run: sqlite3 ${dbPath} < features.sql`);
     process.exit(1);
   }
 
@@ -144,11 +166,24 @@ export async function runAutonomousAgent({
     printProgressSummary(absoluteProjectDir);
     console.log();
 
+    // Generate current_batch.json for this session
+    const batchFeatures = getNextFeatures(absoluteProjectDir, 10);
+    const batchPath = path.join(autonomousDir, "current_batch.json");
+    fs.writeFileSync(batchPath, JSON.stringify(batchFeatures, null, 2));
+    console.log(
+      `Generated batch: ${batchFeatures.length} features ready for this session`
+    );
+    console.log();
+
     let sessionStats: SessionStats | null = null;
 
     try {
       // Run a single agent session
-      sessionStats = await runAgentSession(absoluteProjectDir, model, codingPrompt);
+      sessionStats = await runAgentSession(
+        absoluteProjectDir,
+        model,
+        codingPrompt
+      );
 
       // Accumulate stats
       if (sessionStats) {
@@ -172,10 +207,16 @@ export async function runAutonomousAgent({
     if (sessionStats) {
       const totalTokens = sessionStats.inputTokens + sessionStats.outputTokens;
       console.log(
-        `Tokens: ${formatTokens(sessionStats.inputTokens)} in / ${formatTokens(sessionStats.outputTokens)} out (${formatTokens(totalTokens)} total)`
+        `Tokens: ${formatTokens(sessionStats.inputTokens)} in / ${formatTokens(
+          sessionStats.outputTokens
+        )} out (${formatTokens(totalTokens)} total)`
       );
       if (sessionStats.cacheReadTokens > 0) {
-        console.log(`Cache: ${formatTokens(sessionStats.cacheReadTokens)} read / ${formatTokens(sessionStats.cacheWriteTokens)} write`);
+        console.log(
+          `Cache: ${formatTokens(
+            sessionStats.cacheReadTokens
+          )} read / ${formatTokens(sessionStats.cacheWriteTokens)} write`
+        );
       }
       console.log(`Cost: $${sessionStats.costUsd.toFixed(2)}`);
     }
@@ -199,10 +240,16 @@ export async function runAutonomousAgent({
   console.log(`Total runtime: ${formatDuration(totalDuration)}`);
   console.log(`Sessions: ${iteration}`);
   console.log(
-    `Total tokens: ${formatTokens(totalStats.inputTokens)} in / ${formatTokens(totalStats.outputTokens)} out (${formatTokens(grandTotalTokens)} total)`
+    `Total tokens: ${formatTokens(totalStats.inputTokens)} in / ${formatTokens(
+      totalStats.outputTokens
+    )} out (${formatTokens(grandTotalTokens)} total)`
   );
   if (totalStats.cacheReadTokens > 0) {
-    console.log(`Total cache: ${formatTokens(totalStats.cacheReadTokens)} read / ${formatTokens(totalStats.cacheWriteTokens)} write`);
+    console.log(
+      `Total cache: ${formatTokens(
+        totalStats.cacheReadTokens
+      )} read / ${formatTokens(totalStats.cacheWriteTokens)} write`
+    );
   }
   console.log(`Total cost: $${totalStats.costUsd.toFixed(2)}`);
   printProgressSummary(absoluteProjectDir);
