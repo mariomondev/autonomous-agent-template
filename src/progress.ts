@@ -25,14 +25,12 @@ export interface Feature {
   description: string;
   category?: string;
   testing_steps: string[];
-  passes: boolean; // Keep for backward compat, derived from status
   status: "pending" | "in_progress" | "completed" | "failed";
   retry_count: number;
 }
 
 export interface CategoryProgress {
   category: string;
-  passing: number; // Keep for backward compat (same as completed)
   total: number;
   pending: number;
   in_progress: number;
@@ -65,29 +63,26 @@ export function hasIncompleteFeatures(projectDir: string): boolean {
   return dbHasIncompleteFeatures(projectDir);
 }
 
-// Keep alias for backward compatibility
-export const hasFailingFeatures = hasIncompleteFeatures;
-
 /**
- * Count passing and total tests.
+ * Count completed and total features.
  */
 export function countProgress(projectDir: string): {
-  passing: number;
+  completed: number;
   total: number;
 } {
   const stats = getKanbanStats(projectDir);
   const total =
     stats.pending + stats.in_progress + stats.completed + stats.failed;
-  return { passing: stats.completed, total };
+  return { completed: stats.completed, total };
 }
 
 /**
  * Get a formatted progress string.
  */
 export function getProgressString(projectDir: string): string {
-  const { passing, total } = countProgress(projectDir);
-  const percentage = total > 0 ? Math.round((passing / total) * 100) : 0;
-  return `Progress: ${passing}/${total} features passing (${percentage}%)`;
+  const { completed, total } = countProgress(projectDir);
+  const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+  return `Progress: ${completed}/${total} features completed (${percentage}%)`;
 }
 
 /**

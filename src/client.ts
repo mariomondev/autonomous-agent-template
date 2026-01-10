@@ -11,6 +11,11 @@
 import { validateBashCommand } from "./security.js";
 import path from "path";
 import fs from "fs";
+import { fileURLToPath } from "url";
+
+// Get the directory of this file (ES module equivalent of __dirname)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Playwright MCP tools for browser automation
 const PLAYWRIGHT_TOOLS = [
@@ -21,6 +26,17 @@ const PLAYWRIGHT_TOOLS = [
   "mcp__playwright__browser_select",
   "mcp__playwright__browser_hover",
   "mcp__playwright__browser_evaluate",
+];
+
+// Features database MCP tools
+const FEATURES_DB_TOOLS = [
+  "mcp__features-db__feature_status",
+  "mcp__features-db__feature_note",
+  "mcp__features-db__category_note",
+  "mcp__features-db__global_note",
+  "mcp__features-db__get_notes",
+  "mcp__features-db__get_stats",
+  "mcp__features-db__list_features",
 ];
 
 // Built-in tools
@@ -55,6 +71,8 @@ export function getClientOptions(
         "Bash(*)",
         // Allow Playwright MCP tools for browser automation
         ...PLAYWRIGHT_TOOLS,
+        // Allow Features DB MCP tools for database operations
+        ...FEATURES_DB_TOOLS,
       ],
     },
   };
@@ -67,7 +85,7 @@ export function getClientOptions(
   console.log("   - Sandbox enabled (OS-level bash isolation)");
   console.log(`   - Filesystem restricted to: ${absoluteProjectDir}`);
   console.log("   - Bash commands restricted to allowlist (see security.ts)");
-  console.log("   - MCP servers: playwright (browser automation)");
+  console.log("   - MCP servers: playwright (browser), features-db (database)");
   console.log("   - Project instructions: CLAUDE.md (if present)");
 
   return {
@@ -83,15 +101,23 @@ export function getClientOptions(
     // Debug: log stderr to see any errors
     stderr: (data: string) => console.error("[STDERR]", data),
 
-    // Playwright MCP for browser testing (official Microsoft package)
+    // MCP servers for browser testing and database operations
     mcpServers: {
       playwright: {
         command: "npx",
         args: ["@playwright/mcp@latest"],
       },
+      "features-db": {
+        command: "bun",
+        args: ["run", path.join(__dirname, "mcp-server.ts")],
+        env: {
+          AUTONOMOUS_PROJECT_DIR: absoluteProjectDir,
+          AUTONOMOUS_SESSION_ID: String(env?.AUTONOMOUS_SESSION_ID || "0"),
+        },
+      },
     },
 
-    allowedTools: [...BUILTIN_TOOLS, ...PLAYWRIGHT_TOOLS],
+    allowedTools: [...BUILTIN_TOOLS, ...PLAYWRIGHT_TOOLS, ...FEATURES_DB_TOOLS],
 
     // Security hook - validates bash commands against allowlist
     canUseTool: async (toolName: string, input: Record<string, unknown>) => {

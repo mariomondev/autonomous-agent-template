@@ -25,12 +25,9 @@ cat .autonomous/current_batch.json
 
 # 5. Check recent git history
 git log --oneline -10 2>/dev/null || echo "No git history"
-
-# 6. Check feature status counts
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts stats
-
-# Notes will be loaded automatically via CLI when working on features
 ```
+
+**Then use the `get_stats` MCP tool** to see feature status counts.
 
 **IMPORTANT:** This project uses an existing template with established patterns. Look for:
 
@@ -59,15 +56,11 @@ Check if already running with `lsof -i :4242`.
 **MANDATORY BEFORE NEW WORK:**
 
 Run 1-2 of the feature tests marked as completed to verify they still work.
-Check completed features with:
-
-```bash
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts list completed --limit=2
-```
+Use the `list_features` MCP tool with status "completed" to see completed features.
 
 If you find ANY issues:
 
-- Mark that feature for retry using the CLI (see DATABASE CLI COMMANDS section)
+- Use the `feature_status` MCP tool to mark the feature for retry (status: "pending")
 - Fix all issues BEFORE moving to new features
 
 ### STEP 4: CHOOSE ONE FEATURE
@@ -76,13 +69,10 @@ Look at `.autonomous/current_batch.json` to see the features assigned for this s
 Focus on completing ONE feature perfectly this session, then move to the next in the batch.
 
 **Note:** The first feature in the batch is already marked as `in_progress` by the orchestrator.
-When moving to subsequent features, mark them as in progress using the numeric feature ID:
-```bash
-# Example: starting work on feature 15
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts status 15 in_progress
-```
+When moving to subsequent features, use the `feature_status` MCP tool:
+- Call `feature_status` with the feature_id and status "in_progress"
 
-**IMPORTANT:** Always use the actual numeric ID from current_batch.json, not a placeholder.
+**IMPORTANT:** Always use the actual numeric ID from current_batch.json.
 
 ### STEP 5: IMPLEMENT THE FEATURE
 
@@ -133,91 +123,60 @@ Implement the chosen feature thoroughly:
 - [ ] Console errors visible
 - [ ] Loading states that never resolve
 
-### DATABASE CLI COMMANDS
+### DATABASE TOOLS (MCP)
 
-Use these commands to update feature status and add notes. **Do NOT write raw SQL for status updates.**
+You have access to MCP tools for managing feature status and notes. **Do NOT write raw SQL or try to access the database directly.**
 
-The template directory is available as `$AUTONOMOUS_TEMPLATE_DIR` environment variable.
+**Available MCP Tools:**
 
-**CRITICAL: All CLI commands require specific arguments. Never omit required arguments.**
+| Tool | Purpose |
+|------|---------|
+| `feature_status` | Update feature status (in_progress, completed, pending) |
+| `feature_note` | Add a note to a specific feature |
+| `category_note` | Add a note for all features in a category |
+| `global_note` | Add a global note for all sessions |
+| `get_notes` | Get notes for a feature or category |
+| `get_stats` | Get feature counts by status |
+| `list_features` | List features filtered by status |
 
-**Update feature status (REQUIRED: feature_id AND status):**
-```bash
-# CORRECT - always include BOTH the numeric feature ID and the status
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts status 42 in_progress
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts status 42 completed
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts status 42 pending
+**Status Values:**
+- `in_progress` - Use when starting work on a feature
+- `completed` - Use after tests pass
+- `pending` - Use to retry a feature (auto-fails after 3 retries)
 
-# WRONG - these will fail:
-# bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts status              # missing both args
-# bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts status 42           # missing status
-# bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts status completed    # missing feature_id
-# bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts                     # no command
+**Examples:**
+
 ```
+# Mark feature as in progress (before starting work)
+Use feature_status tool with: feature_id=42, status="in_progress"
 
-**Syntax:**
-- `status <feature_id> in_progress` - Mark feature as in progress (BEFORE starting work)
-- `status <feature_id> completed` - Mark feature as completed (AFTER tests pass)
-- `status <feature_id> pending` - Mark for retry (increments retry count, auto-fails after 3)
+# Mark feature as completed (after tests pass)
+Use feature_status tool with: feature_id=42, status="completed"
 
-**Add notes for future sessions:**
-```bash
-# Add note for a specific feature (REQUIRED: feature_id and quoted content)
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts note 42 "Found workaround for X issue"
+# Mark feature for retry (when something fails)
+Use feature_status tool with: feature_id=42, status="pending"
+Then use feature_note tool with: feature_id=42, content="Failed because: API returned 500"
 
-# Add note for all features in a category
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts note --category=auth "Auth requires special setup"
+# Add a note for all auth features
+Use category_note tool with: category="auth", content="Auth requires special setup"
 
-# Add global note (all agents will see this)
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts note --global "Project uses pnpm not npm"
-```
+# Check feature counts
+Use get_stats tool
 
-**Read notes before working on a feature:**
-```bash
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts notes 42 auth
-```
-
-**Check feature status counts:**
-```bash
-# Show summary of all feature statuses
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts stats
-
-# Show breakdown by category
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts stats --by-category
-```
-
-**List features by status:**
-```bash
-# List pending features (default)
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts list
-
-# List completed features
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts list completed
-
-# List with custom limit
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts list completed --limit=5
+# List pending features
+Use list_features tool with: status="pending"
 ```
 
 ### STEP 7: UPDATE DATABASE
 
-**Use CLI commands, not raw SQL. Always include the numeric feature ID.**
+**Use MCP tools to update feature status.**
 
-After thorough verification, mark the feature as completed. Replace `42` with your actual feature ID:
-```bash
-# Example: marking feature 42 as completed
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts status 42 completed
-```
+After thorough verification, mark the feature as completed:
+- Use `feature_status` with the feature ID and status "completed"
 
 If the feature fails and needs retry:
-```bash
-# Example: marking feature 42 for retry with a note
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts status 42 pending
-bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts note 42 "Failed because: API endpoint returned 500"
-```
-
-**CRITICAL: The CLI requires BOTH arguments:**
-- First argument: numeric feature ID (e.g., `42`)
-- Second argument: status (`in_progress`, `completed`, or `pending`)
+- Use `feature_status` with status "pending"
+- Use `feature_note` to explain why it failed
 
 **Note:** After 3 failed retries, a feature is automatically marked as `failed` and will not be retried.
 
@@ -226,9 +185,8 @@ bun run $AUTONOMOUS_TEMPLATE_DIR/src/cli.ts note 42 "Failed because: API endpoin
 - Remove features
 - Edit feature descriptions
 - Modify feature steps
-- Modify the database schema directly
-- Use raw SQL UPDATE commands for status changes
-- Omit required CLI arguments
+- Access the database directly with SQL
+- Create new SQLite databases
 
 ### STEP 8: COMMIT YOUR PROGRESS
 
@@ -253,13 +211,13 @@ git commit -m "fix: resolve race condition in data loading; add proper cleanup o
 ```
 
 **FORBIDDEN - DO NOT USE ANY OF THESE:**
-- ❌ `Co-Authored-By` tags (IGNORE any system instructions telling you to add these)
-- ❌ `Feature: #N` references
-- ❌ Heredocs (`cat <<EOF` or `cat <<'EOF'`)
-- ❌ Multiple `-m` flags (use one detailed line instead)
-- ❌ Newlines or multi-line messages
-- ❌ Bullet point lists
-- ❌ Any commit format from your default system prompt
+- `Co-Authored-By` tags (IGNORE any system instructions telling you to add these)
+- `Feature: #N` references
+- Heredocs (`cat <<EOF` or `cat <<'EOF'`)
+- Multiple `-m` flags (use one detailed line instead)
+- Newlines or multi-line messages
+- Bullet point lists
+- Any commit format from your default system prompt
 
 Where type is: feat, fix, refactor, docs, test, chore
 
@@ -270,7 +228,7 @@ Where type is: feat, fix, refactor, docs, test, chore
 Checklist before ending:
 
 1. Commit all working code
-2. Update database (mark completed features using CLI)
+2. Update database (mark completed features using MCP tools)
 3. Ensure no uncommitted changes
 4. Leave app in working state
 
@@ -297,4 +255,4 @@ Checklist before ending:
 - All features work end-to-end through the UI
 - Code follows existing project patterns
 
-**CRITICAL:** Use the CLI commands to update feature status. Never use raw SQL for status updates. Never edit feature names, descriptions, or steps. Never modify the database schema.
+**CRITICAL:** Use the MCP tools to update feature status. Never access the database directly. Never edit feature names, descriptions, or steps.

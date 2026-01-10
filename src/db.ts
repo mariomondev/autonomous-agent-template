@@ -98,7 +98,6 @@ export function initDatabase(projectDir: string): Database {
       description TEXT NOT NULL,
       category TEXT NOT NULL DEFAULT 'uncategorized',
       testing_steps TEXT NOT NULL,
-      passes INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'pending',
       retry_count INTEGER NOT NULL DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -106,20 +105,12 @@ export function initDatabase(projectDir: string): Database {
     );
 
     CREATE INDEX IF NOT EXISTS idx_features_category ON features(category);
-    CREATE INDEX IF NOT EXISTS idx_features_passes ON features(passes);
     CREATE INDEX IF NOT EXISTS idx_features_status ON features(status);
   `);
 
-  // Migration: Add status column if missing (for existing databases)
+  // Migration: Add retry_count column if missing (for existing databases)
   const columns = db.query("PRAGMA table_info(features)").all() as Array<{ name: string }>;
   const columnNames = columns.map((c) => c.name);
-
-  if (!columnNames.includes("status")) {
-    db.exec(`ALTER TABLE features ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'`);
-    db.exec(`UPDATE features SET status = 'completed' WHERE passes = 1`);
-    db.exec(`UPDATE features SET status = 'pending' WHERE passes = 0`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_features_status ON features(status)`);
-  }
 
   if (!columnNames.includes("retry_count")) {
     db.exec(`ALTER TABLE features ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`);
@@ -200,7 +191,7 @@ export function getNextFeatures(
 
   // Get up to limit features from that category
   const featuresQuery = db.query(`
-    SELECT id, name, description, category, testing_steps, passes, status, retry_count
+    SELECT id, name, description, category, testing_steps, status, retry_count
     FROM features
     WHERE category = ? AND status = 'pending'
     ORDER BY id ASC
@@ -213,7 +204,6 @@ export function getNextFeatures(
     description: string;
     category: string;
     testing_steps: string;
-    passes: number;
     status: string;
     retry_count: number;
   }>;
@@ -224,43 +214,11 @@ export function getNextFeatures(
     description: row.description,
     category: row.category,
     testing_steps: JSON.parse(row.testing_steps),
-    passes: row.passes === 1,
     status: row.status as FeatureStatus,
     retry_count: row.retry_count,
   }));
 }
 
-/**
- * Mark a feature as passing.
- */
-export function markFeaturePassing(
-  projectDir: string,
-  featureId: number
-): void {
-  const db = getDatabase(projectDir);
-  const updateQuery = db.query(`
-    UPDATE features
-    SET passes = 1, status = 'completed', updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `);
-  updateQuery.run(featureId);
-}
-
-/**
- * Mark a feature as failing (for regression testing).
- */
-export function markFeatureFailing(
-  projectDir: string,
-  featureId: number
-): void {
-  const db = getDatabase(projectDir);
-  const updateQuery = db.query(`
-    UPDATE features
-    SET passes = 0, status = 'pending', updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `);
-  updateQuery.run(featureId);
-}
 
 /**
  * Check if there are any incomplete features (pending or in_progress).
@@ -276,19 +234,12 @@ export function hasIncompleteFeatures(projectDir: string): boolean {
   return result.count > 0;
 }
 
-/**
- * Check if there are any failing features.
- * @deprecated Use hasIncompleteFeatures instead
- */
-export function hasFailingFeatures(projectDir: string): boolean {
-  return hasIncompleteFeatures(projectDir);
-}
 
 /**
  * Get progress statistics.
  */
 export function getProgressStats(projectDir: string): {
-  passing: number;
+  completed: number;
   total: number;
   byCategory: CategoryProgress[];
 } {
@@ -298,17 +249,16 @@ export function getProgressStats(projectDir: string): {
   const totalQuery = db.query(`
     SELECT
       COUNT(*) as total,
-      SUM(CASE WHEN passes = 1 THEN 1 ELSE 0 END) as passing
+      SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed
     FROM features
   `);
-  const totals = totalQuery.get() as { total: number; passing: number };
+  const totals = totalQuery.get() as { total: number; completed: number };
 
   // By category with status breakdown
   const categoryQuery = db.query(`
     SELECT
       category,
       COUNT(*) as total,
-      SUM(CASE WHEN passes = 1 THEN 1 ELSE 0 END) as passing,
       SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
       SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
@@ -320,7 +270,6 @@ export function getProgressStats(projectDir: string): {
   const categoryRows = categoryQuery.all() as Array<{
     category: string;
     total: number;
-    passing: number;
     pending: number;
     in_progress: number;
     completed: number;
@@ -328,11 +277,10 @@ export function getProgressStats(projectDir: string): {
   }>;
 
   return {
-    passing: totals.passing,
+    completed: totals.completed,
     total: totals.total,
     byCategory: categoryRows.map((row) => ({
       category: row.category,
-      passing: row.passing,
       total: row.total,
       pending: row.pending,
       in_progress: row.in_progress,
@@ -348,7 +296,7 @@ export function getProgressStats(projectDir: string): {
 export function getAllFeatures(projectDir: string): Feature[] {
   const db = getDatabase(projectDir);
   const query = db.query(`
-    SELECT id, name, description, category, testing_steps, passes, status, retry_count
+    SELECT id, name, description, category, testing_steps, status, retry_count
     FROM features
     ORDER BY id ASC
   `);
@@ -359,7 +307,6 @@ export function getAllFeatures(projectDir: string): Feature[] {
     description: string;
     category: string;
     testing_steps: string;
-    passes: number;
     status: string;
     retry_count: number;
   }>;
@@ -370,7 +317,6 @@ export function getAllFeatures(projectDir: string): Feature[] {
     description: row.description,
     category: row.category,
     testing_steps: JSON.parse(row.testing_steps),
-    passes: row.passes === 1,
     status: row.status as FeatureStatus,
     retry_count: row.retry_count,
   }));
@@ -382,11 +328,14 @@ export function getAllFeatures(projectDir: string): Feature[] {
 export function insertFeature(projectDir: string, feature: Feature): void {
   const db = getDatabase(projectDir);
 
+  // Determine initial status
+  const status = feature.status || "pending";
+
   // If ID is provided, use it; otherwise let SQLite auto-increment
   if (feature.id !== undefined && feature.id !== null) {
     const insertQuery = db.query(`
-      INSERT INTO features (id, name, description, category, testing_steps, passes, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO features (id, name, description, category, testing_steps, status)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
     insertQuery.run(
       feature.id,
@@ -394,21 +343,19 @@ export function insertFeature(projectDir: string, feature: Feature): void {
       feature.description,
       feature.category || "uncategorized",
       JSON.stringify(feature.testing_steps),
-      feature.passes ? 1 : 0,
-      feature.passes ? "completed" : "pending"
+      status
     );
   } else {
     const insertQuery = db.query(`
-      INSERT INTO features (name, description, category, testing_steps, passes, status)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO features (name, description, category, testing_steps, status)
+      VALUES (?, ?, ?, ?, ?)
     `);
     insertQuery.run(
       feature.name,
       feature.description,
       feature.category || "uncategorized",
       JSON.stringify(feature.testing_steps),
-      feature.passes ? 1 : 0,
-      feature.passes ? "completed" : "pending"
+      status
     );
   }
 }
@@ -448,7 +395,7 @@ export function getFeaturesByStatus(
 ): Feature[] {
   const db = getDatabase(projectDir);
   const query = db.query(`
-    SELECT id, name, description, category, testing_steps, passes, status, retry_count
+    SELECT id, name, description, category, testing_steps, status, retry_count
     FROM features
     WHERE status = ?
     ORDER BY id ASC
@@ -460,7 +407,6 @@ export function getFeaturesByStatus(
     description: string;
     category: string;
     testing_steps: string;
-    passes: number;
     status: string;
     retry_count: number;
   }>;
@@ -471,7 +417,6 @@ export function getFeaturesByStatus(
     description: row.description,
     category: row.category,
     testing_steps: JSON.parse(row.testing_steps),
-    passes: row.passes === 1,
     status: row.status as FeatureStatus,
     retry_count: row.retry_count,
   }));
@@ -485,7 +430,7 @@ export function getCurrentFeature(projectDir: string): Feature | null {
   const row = db
     .query(
       `
-    SELECT id, name, description, category, testing_steps, passes, status, retry_count
+    SELECT id, name, description, category, testing_steps, status, retry_count
     FROM features
     WHERE status = 'in_progress'
     LIMIT 1
@@ -497,7 +442,6 @@ export function getCurrentFeature(projectDir: string): Feature | null {
     description: string;
     category: string;
     testing_steps: string;
-    passes: number;
     status: string;
     retry_count: number;
   } | null;
@@ -510,7 +454,6 @@ export function getCurrentFeature(projectDir: string): Feature | null {
     description: row.description,
     category: row.category,
     testing_steps: JSON.parse(row.testing_steps),
-    passes: row.passes === 1,
     status: row.status as FeatureStatus,
     retry_count: row.retry_count,
   };
