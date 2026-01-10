@@ -7,10 +7,7 @@
  */
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import {
-  printProgressSummary,
-  AUTONOMOUS_DIR,
-} from "./progress.js";
+import { printProgressSummary, AUTONOMOUS_DIR } from "./progress.js";
 import { getClientOptions } from "./client.js";
 import {
   initDatabase,
@@ -101,8 +98,19 @@ function getRelevantNotes(projectDir: string, category: string): string {
  */
 function buildSessionContext(
   projectDir: string,
-  batchFeatures: Array<{ id?: number; name: string; description: string; category?: string; status: string }>,
-  stats: { pending: number; in_progress: number; completed: number; failed: number }
+  batchFeatures: Array<{
+    id?: number;
+    name: string;
+    description: string;
+    category?: string;
+    status: string;
+  }>,
+  stats: {
+    pending: number;
+    in_progress: number;
+    completed: number;
+    failed: number;
+  }
 ): string {
   const category = batchFeatures[0]?.category || "uncategorized";
   const notes = getRelevantNotes(projectDir, category);
@@ -116,7 +124,8 @@ function buildSessionContext(
     })
     .join("\n");
 
-  const total = stats.pending + stats.in_progress + stats.completed + stats.failed;
+  const total =
+    stats.pending + stats.in_progress + stats.completed + stats.failed;
   const pct = total > 0 ? Math.round((stats.completed / total) * 100) : 0;
 
   return `
@@ -238,7 +247,10 @@ export async function runAutonomousAgent({
   };
 
   // Main loop - continue while there are incomplete features
-  while (hasIncompleteFeatures(absoluteProjectDir) && iteration < maxIterations) {
+  while (
+    hasIncompleteFeatures(absoluteProjectDir) &&
+    iteration < maxIterations
+  ) {
     iteration++;
 
     const sessionStart = new Date();
@@ -268,13 +280,20 @@ export async function runAutonomousAgent({
     const featureLookup: FeatureLookup = {};
     for (const f of batchFeatures) {
       if (f.id !== undefined) {
-        featureLookup[f.id] = { name: f.name, category: f.category || "uncategorized" };
+        featureLookup[f.id] = {
+          name: f.name,
+          category: f.category || "uncategorized",
+        };
       }
     }
 
     // Build enriched prompt with injected context
     const kanbanStats = getKanbanStats(absoluteProjectDir);
-    const sessionContext = buildSessionContext(absoluteProjectDir, batchFeatures, kanbanStats);
+    const sessionContext = buildSessionContext(
+      absoluteProjectDir,
+      batchFeatures,
+      kanbanStats
+    );
     const enrichedPrompt = sessionContext + codingPrompt;
 
     console.log();
@@ -312,20 +331,43 @@ export async function runAutonomousAgent({
 
       // End session with stats
       endSession(absoluteProjectDir, sessionId, {
-        status: 'completed',
+        status: "completed",
         features_attempted: batchFeatures.length,
-        features_completed: sessionStats?.outputTokens ? batchFeatures.length : 0, // rough estimate
+        features_completed: sessionStats?.outputTokens
+          ? batchFeatures.length
+          : 0, // rough estimate
         input_tokens: sessionStats?.inputTokens,
         output_tokens: sessionStats?.outputTokens,
         cost_usd: sessionStats?.costUsd,
       });
     } catch (error) {
-      console.error(`\nSession ${iteration} encountered an error:`, error);
-      console.log("Retrying after delay...");
+      console.error(`\nSession ${iteration} encountered an error:`);
+
+      // Log detailed error information
+      if (error instanceof Error) {
+        console.error(`  Message: ${error.message}`);
+        if (error.stack) {
+          console.error(`  Stack trace:\n${error.stack}`);
+        }
+        // Log any additional properties on the error object
+        const errorObj = error as unknown as Record<string, unknown>;
+        for (const key of Object.keys(errorObj)) {
+          if (key !== "message" && key !== "stack" && key !== "name") {
+            console.error(
+              `  ${key}: ${JSON.stringify(errorObj[key], null, 2)}`
+            );
+          }
+        }
+      } else {
+        console.error(`  Error: ${JSON.stringify(error, null, 2)}`);
+      }
+
+      console.log("\nRetrying after delay...");
+      await sleep(5000); // Wait 5 seconds before retry
 
       // End session with error
       endSession(absoluteProjectDir, sessionId, {
-        status: 'failed',
+        status: "failed",
         error_message: error instanceof Error ? error.message : String(error),
       });
     }
@@ -355,7 +397,10 @@ export async function runAutonomousAgent({
     console.log(`${"-".repeat(60)}`);
 
     // Check if we should continue
-    if (hasIncompleteFeatures(absoluteProjectDir) && iteration < maxIterations) {
+    if (
+      hasIncompleteFeatures(absoluteProjectDir) &&
+      iteration < maxIterations
+    ) {
       console.log("\n--- Auto-continuing in 3 seconds (Ctrl+C to pause) ---");
       await sleep(3000);
     }
@@ -458,12 +503,23 @@ async function runAgentSession(
           const feature = featureLookup[featureId];
 
           if (feature && status) {
-            const statusIcon = status === "completed" ? "✓" : status === "in_progress" ? "→" : status === "pending" ? "↻" : "✗";
-            console.log(`\n[${statusIcon}] Feature ${featureId}: "${feature.name}" → ${status}`);
+            const statusIcon =
+              status === "completed"
+                ? "✓"
+                : status === "in_progress"
+                ? "→"
+                : status === "pending"
+                ? "↻"
+                : "✗";
+            console.log(
+              `\n[${statusIcon}] Feature ${featureId}: "${feature.name}" → ${status}`
+            );
 
             if (status === "completed") {
               completedCount++;
-              console.log(`    Progress: ${completedCount}/${totalInBatch} features completed this session`);
+              console.log(
+                `    Progress: ${completedCount}/${totalInBatch} features completed this session`
+              );
             }
           } else {
             console.log(`\n[Tool: ${msg.tool_name}]`);
