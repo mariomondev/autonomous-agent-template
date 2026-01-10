@@ -6,34 +6,23 @@ You are working on an **existing project template** with established patterns.
 
 **IMPORTANT:** Agent files are in `.autonomous/` directory. Dev server runs on port **4242**.
 
-### STEP 1: GET YOUR BEARINGS (MANDATORY)
+**NOTE:** The SESSION CONTEXT section above contains:
+- Your assigned features for this session
+- Overall progress statistics
+- Notes from previous sessions (if any)
 
-Start by orienting yourself:
+### STEP 1: UNDERSTAND THE PROJECT
 
-```bash
-# 1. See your working directory
-pwd
+Read these files to understand what you're building:
 
-# 2. List files to understand project structure
-ls -la
+1. **`.autonomous/app_spec.txt`** - Project specification (what to build)
+2. **`CLAUDE.md`** - Project conventions and patterns (if present)
 
-# 3. Read the app specification
-cat .autonomous/app_spec.txt | head -100
+Then explore the existing codebase:
+- Look at existing components for style reference
+- Check how similar features were implemented
 
-# 4. Read the current batch of features for this session
-cat .autonomous/current_batch.json
-
-# 5. Check recent git history
-git log --oneline -10 2>/dev/null || echo "No git history"
-```
-
-**Then use the `get_stats` MCP tool** to see feature status counts.
-
-**IMPORTANT:** This project uses an existing template with established patterns. Look for:
-
-- CLAUDE.md for project guidance
-- Existing components and patterns to follow
-- Server actions, API routes, or other conventions already in place
+**This project uses an existing template with established patterns.** Match the coding style, component patterns, and conventions already in the codebase.
 
 ### STEP 2: START DEV SERVER (IF NOT RUNNING)
 
@@ -65,14 +54,14 @@ If you find ANY issues:
 
 ### STEP 4: CHOOSE ONE FEATURE
 
-Look at `.autonomous/current_batch.json` to see the features assigned for this session (max 10 from the same category).
-Focus on completing ONE feature perfectly this session, then move to the next in the batch.
+Your assigned features are listed in the SESSION CONTEXT above under "Your Assignment".
+Focus on completing ONE feature perfectly, then move to the next in the batch.
 
 **Note:** The first feature in the batch is already marked as `in_progress` by the orchestrator.
 When moving to subsequent features, use the `feature_status` MCP tool:
 - Call `feature_status` with the feature_id and status "in_progress"
 
-**IMPORTANT:** Always use the actual numeric ID from current_batch.json.
+**IMPORTANT:** Always use the actual numeric ID from the assignment list.
 
 ### STEP 5: IMPLEMENT THE FEATURE
 

@@ -21,6 +21,8 @@ import {
   resetOrphanedFeatures,
   hasIncompleteFeatures,
   setFeatureStatus,
+  getKanbanStats,
+  getNotesForFeature,
 } from "./db.js";
 import fs from "fs";
 import path from "path";
@@ -68,6 +70,71 @@ interface AgentConfig {
   maxIterations: number;
   port: number;
   model: string;
+}
+
+interface FeatureLookup {
+  [id: number]: { name: string; category: string };
+}
+
+/**
+ * Get global and category notes for context.
+ */
+function getRelevantNotes(projectDir: string, category: string): string {
+  const notes = getNotesForFeature(projectDir, null, category);
+  if (notes.length === 0) return "";
+
+  const formatted = notes
+    .slice(0, 10) // Limit to 10 most recent notes
+    .map((n) => {
+      const scope = n.category ? `[${n.category}]` : "[global]";
+      return `- ${scope} ${n.content}`;
+    })
+    .join("\n");
+
+  return `\n### Notes from Previous Sessions\n${formatted}`;
+}
+
+/**
+ * Build the session context to inject into the prompt.
+ * Lean approach: only inject ephemeral/session-specific info.
+ * Agent reads static files (app_spec.txt, CLAUDE.md) when needed.
+ */
+function buildSessionContext(
+  projectDir: string,
+  batchFeatures: Array<{ id?: number; name: string; description: string; category?: string; status: string }>,
+  stats: { pending: number; in_progress: number; completed: number; failed: number }
+): string {
+  const category = batchFeatures[0]?.category || "uncategorized";
+  const notes = getRelevantNotes(projectDir, category);
+
+  // Format the batch as a nice table
+  const batchTable = batchFeatures
+    .map((f, i) => {
+      const status = i === 0 ? "in_progress" : "pending";
+      const marker = status === "in_progress" ? "→" : " ";
+      return `${marker} ${f.id}: ${f.name} [${status}]`;
+    })
+    .join("\n");
+
+  const total = stats.pending + stats.in_progress + stats.completed + stats.failed;
+  const pct = total > 0 ? Math.round((stats.completed / total) * 100) : 0;
+
+  return `
+## SESSION CONTEXT
+
+### Your Assignment (${batchFeatures.length} features from "${category}" category)
+
+\`\`\`
+${batchTable}
+\`\`\`
+
+Feature ${batchFeatures[0]?.id} ("${batchFeatures[0]?.name}") is already marked as in_progress.
+
+### Progress: ${stats.completed}/${total} completed (${pct}%) | ${stats.pending} pending | ${stats.failed} failed
+${notes}
+---
+
+`;
 }
 
 interface SessionStats {
@@ -196,6 +263,20 @@ export async function runAutonomousAgent({
       setFeatureStatus(absoluteProjectDir, batchFeatures[0].id, "in_progress");
       console.log(`Marked feature ${batchFeatures[0].id} as in_progress`);
     }
+
+    // Build feature lookup for live updates
+    const featureLookup: FeatureLookup = {};
+    for (const f of batchFeatures) {
+      if (f.id !== undefined) {
+        featureLookup[f.id] = { name: f.name, category: f.category || "uncategorized" };
+      }
+    }
+
+    // Build enriched prompt with injected context
+    const kanbanStats = getKanbanStats(absoluteProjectDir);
+    const sessionContext = buildSessionContext(absoluteProjectDir, batchFeatures, kanbanStats);
+    const enrichedPrompt = sessionContext + codingPrompt;
+
     console.log();
 
     // Create session record
@@ -215,8 +296,9 @@ export async function runAutonomousAgent({
       sessionStats = await runAgentSession(
         absoluteProjectDir,
         model,
-        codingPrompt,
-        agentEnv
+        enrichedPrompt,
+        agentEnv,
+        featureLookup
       );
 
       // Accumulate stats
@@ -325,7 +407,8 @@ async function runAgentSession(
   projectDir: string,
   model: string,
   prompt: string,
-  env: Record<string, string>
+  env: Record<string, string>,
+  featureLookup: FeatureLookup = {}
 ): Promise<SessionStats> {
   const options = getClientOptions(projectDir, model, env);
 
@@ -342,6 +425,10 @@ async function runAgentSession(
     cacheWriteTokens: 0,
     costUsd: 0,
   };
+
+  // Track completed features for live updates
+  let completedCount = 0;
+  const totalInBatch = Object.keys(featureLookup).length;
 
   // Stream and display the response
   // Using 'any' to handle SDK type variations
@@ -363,7 +450,27 @@ async function runAgentSession(
         break;
 
       case "tool_call":
-        console.log(`\n[Tool: ${msg.tool_name}]`);
+        // Check for feature_status MCP tool for live updates
+        if (msg.tool_name === "feature_status" && msg.tool_input) {
+          const input = msg.tool_input;
+          const featureId = input.feature_id;
+          const status = input.status;
+          const feature = featureLookup[featureId];
+
+          if (feature && status) {
+            const statusIcon = status === "completed" ? "✓" : status === "in_progress" ? "→" : status === "pending" ? "↻" : "✗";
+            console.log(`\n[${statusIcon}] Feature ${featureId}: "${feature.name}" → ${status}`);
+
+            if (status === "completed") {
+              completedCount++;
+              console.log(`    Progress: ${completedCount}/${totalInBatch} features completed this session`);
+            }
+          } else {
+            console.log(`\n[Tool: ${msg.tool_name}]`);
+          }
+        } else {
+          console.log(`\n[Tool: ${msg.tool_name}]`);
+        }
         break;
 
       case "tool_result":

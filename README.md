@@ -141,7 +141,7 @@ http://localhost:4242
 2. Writes `.autonomous/current_batch.json` with features for this session
 3. Implements features following your project's patterns
 4. Verifies with Playwright browser automation (on port 4242)
-5. Updates database via CLI: `bun run cli.ts status <id> completed` when verification succeeds
+5. Updates database via MCP tools when verification succeeds
 6. Commits progress and moves to the next feature in the batch
 7. Repeats until all features pass or max iterations reached
 
@@ -262,7 +262,7 @@ No API key needed - uses your existing Claude Code authentication.
 
 **Tests not passing**
 
-- Check feature status: `AUTONOMOUS_PROJECT_DIR=. bun run src/cli.ts stats`
+- Check feature status: `sqlite3 .autonomous/db.sqlite "SELECT status, COUNT(*) FROM features GROUP BY status"`
 - Look at git history: `git log --oneline -20`
 - Run the dev server manually: `PORT=4242 bun run dev`
 
@@ -270,7 +270,7 @@ No API key needed - uses your existing Claude Code authentication.
 
 - Press Ctrl+C to pause
 - Check `.autonomous/current_batch.json` for the current session's features
-- List pending features: `AUTONOMOUS_PROJECT_DIR=. bun run src/cli.ts list pending`
+- List pending features: `sqlite3 .autonomous/db.sqlite "SELECT id, name FROM features WHERE status='pending'"`
 - Manually fix issues and restart
 
 ---
