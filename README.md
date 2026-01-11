@@ -32,6 +32,7 @@ bun run start ./your-project [options]
 #   --max=<n>      Max iterations (default: unlimited)
 #   --port=<n>     Dev server port (default: 4242)
 #   --model=<name> opus, sonnet, or full model ID (default: opus)
+#   --force        Bypass circuit breaker (continue despite failures)
 ```
 
 ---
@@ -85,7 +86,7 @@ INSERT INTO features (id, name, description, category, testing_steps, status) VA
 
 ## How It Works
 
-1. Queries `db.sqlite` for next batch of features (max 10 from same category)
+1. Queries `db.sqlite` for next batch of features (max 5 from same category)
 2. Starts dev server on port 4242
 3. Implements features following your patterns
 4. Verifies with Playwright browser automation
@@ -99,7 +100,7 @@ INSERT INTO features (id, name, description, category, testing_steps, status) VA
 Three layers:
 1. **OS Sandbox** - Isolated bash environment
 2. **Filesystem** - Restricted to project directory
-3. **Bash Allowlist** - Only permitted commands run
+3. **Bash Allowlist** - Only permitted commands run + protected files (`.autonomous/protected-files.json`)
 
 ---
 

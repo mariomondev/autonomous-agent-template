@@ -24,6 +24,7 @@ const ALLOWED_COMMANDS = new Set([
   "grep",
   // File operations (agent uses SDK tools for most file ops, but these are needed occasionally)
   "cp",
+  "mv",
   "mkdir",
   "chmod", // For making scripts executable; validated separately
   "rm", // Validated separately to block recursive deletion
@@ -82,7 +83,7 @@ const SENSITIVE_COMMANDS: Record<
       return {
         allowed: false,
         reason:
-          "Heredocs not allowed. Use: git commit -m \"single line message\"",
+          'Heredocs not allowed. Use: git commit -m "single line message"',
       };
     }
 
@@ -277,9 +278,9 @@ const SENSITIVE_COMMANDS: Record<
   },
 
   /**
-   * rm - Block recursive deletion
+   * rm - Block recursive deletion and protected files
    */
-  rm: (args, _fullCommand) => {
+  rm: (args, _fullCommand, context) => {
     const dangerousFlags = ["-r", "-R", "--recursive", "-rf", "-fr"];
     for (const arg of args) {
       // Check exact match
@@ -300,6 +301,66 @@ const SENSITIVE_COMMANDS: Record<
         }
       }
     }
+
+    // Check protected files
+    for (const arg of args) {
+      if (!arg.startsWith("-")) {
+        if (isProtectedPath(arg, context)) {
+          return {
+            allowed: false,
+            reason: `Cannot delete protected file: ${arg}`,
+          };
+        }
+      }
+    }
+
+    return { allowed: true };
+  },
+
+  /**
+   * cp - Block overwriting protected files
+   */
+  cp: (args, _fullCommand, context) => {
+    // Get non-flag arguments (source(s) and destination)
+    const nonFlags = args.filter((a) => !a.startsWith("-"));
+    // Last arg is destination
+    const destination = nonFlags[nonFlags.length - 1];
+
+    if (destination && isProtectedPath(destination, context)) {
+      return {
+        allowed: false,
+        reason: `Cannot overwrite protected file: ${destination}`,
+      };
+    }
+
+    return { allowed: true };
+  },
+
+  /**
+   * mv - Block moving or overwriting protected files
+   */
+  mv: (args, _fullCommand, context) => {
+    // Get non-flag arguments (source(s) and destination)
+    const nonFlags = args.filter((a) => !a.startsWith("-"));
+    const source = nonFlags[0];
+    const destination = nonFlags[nonFlags.length - 1];
+
+    // Can't move a protected file
+    if (source && isProtectedPath(source, context)) {
+      return {
+        allowed: false,
+        reason: `Cannot move protected file: ${source}`,
+      };
+    }
+
+    // Can't overwrite a protected file
+    if (destination && isProtectedPath(destination, context)) {
+      return {
+        allowed: false,
+        reason: `Cannot overwrite protected file: ${destination}`,
+      };
+    }
+
     return { allowed: true };
   },
 };
@@ -402,6 +463,50 @@ export interface ValidationResult {
 
 export interface ValidationContext {
   port?: number;
+  protectedFiles?: string[];
+  protectedPatterns?: string[];
+}
+
+/**
+ * Check if a path matches a simple glob pattern.
+ * Supports * (match any chars) and basic matching.
+ */
+function matchSimpleGlob(pattern: string, str: string): boolean {
+  // Convert glob to regex: * becomes .*, escape other special chars
+  const regexPattern = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&") // Escape regex special chars except *
+    .replace(/\*/g, ".*"); // * becomes .*
+  return new RegExp(`^${regexPattern}$`).test(str);
+}
+
+/**
+ * Check if a path is protected based on the validation context.
+ */
+function isProtectedPath(
+  targetPath: string,
+  context?: ValidationContext
+): boolean {
+  if (!context?.protectedFiles && !context?.protectedPatterns) return false;
+
+  // Normalize path (remove ./ prefix)
+  const normalizedPath = targetPath.replace(/^\.\//, "");
+  const basename = normalizedPath.split("/").pop() || normalizedPath;
+
+  // Check exact matches against protected files
+  if (context.protectedFiles) {
+    if (context.protectedFiles.includes(normalizedPath)) return true;
+    if (context.protectedFiles.includes(basename)) return true;
+  }
+
+  // Check patterns
+  if (context.protectedPatterns) {
+    for (const pattern of context.protectedPatterns) {
+      if (matchSimpleGlob(pattern, normalizedPath)) return true;
+      if (matchSimpleGlob(pattern, basename)) return true;
+    }
+  }
+
+  return false;
 }
 
 /**

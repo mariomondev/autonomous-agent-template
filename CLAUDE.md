@@ -17,6 +17,7 @@ bun run start ./path/to/project [options]
 #   --max=<n>        Max iterations (default: unlimited)
 #   --port=<n>       Dev server port (default: 4242)
 #   --model=<name>   opus, sonnet, or full model ID (default: opus)
+#   --force          Bypass circuit breaker (continue despite failures)
 
 # Run tests
 bun run test
@@ -44,7 +45,7 @@ The system has two layers:
 ### Data Flow
 
 1. Orchestrator reads `<project>/.autonomous/db.sqlite` for pending features
-2. Generates `current_batch.json` with up to 10 features from one category
+2. Generates `current_batch.json` with up to 5 features from one category
 3. Spawns inner agent with `prompts/coding_prompt.md` as instructions
 4. Inner agent implements features, updates status via MCP tools (features-db server)
 5. Session ends when batch complete or max turns reached

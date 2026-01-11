@@ -9,11 +9,11 @@ A feature-by-feature comparison of our autonomous-agent-template against [Anthro
 | Aspect | Anthropic Harness | Our Template |
 |--------|-------------------|--------------|
 | **State Management** | JSON files | SQLite database |
-| **Feature Batching** | Single feature | 10 features per session |
+| **Feature Batching** | Single feature | 5 features per session |
 | **Agent Communication** | File reads | MCP server |
 | **Session Tracking** | Minimal | Full (cost, duration, errors) |
 | **Context System** | Single progress file | Hierarchical notes (global/category/feature) |
-| **Crash Recovery** | Manual (git reset) | Automatic (orphan reset) |
+| **Crash Recovery** | Manual (git reset) | Automatic (orphan reset + circuit breaker) |
 | **Dev Server** | Manual (init.sh) | Automatic management |
 | **Command Validation** | Basic allowlist | Allowlist + semantic validation |
 
@@ -65,16 +65,16 @@ Session N+1: Pick next 1 incomplete feature → implement → commit
 
 ### Ours: Batched by Category
 ```
-Session N: Query 10 pending features from same category → implement all
-Session N+1: Next 10 from same/next category
+Session N: Query 5 pending features from same category → implement all
+Session N+1: Next 5 from same/next category
 ```
 
-- **10x fewer context window bootstraps**
+- **5x fewer context window bootstraps**
 - **Category grouping** reduces context switching
 - Related features benefit from shared context
-- More efficient token usage
+- Smaller batches = less risk of runaway sessions
 
-**Why it matters**: Implementing 200 features takes ~20 sessions vs ~200 sessions.
+**Why it matters**: Implementing 200 features takes ~40 sessions vs ~200 sessions.
 
 ---
 
@@ -191,14 +191,20 @@ git reset --hard HEAD
 ### Ours: Automatic
 ```typescript
 // On startup:
-resetOrphanedFeatures()
-// Any feature marked "in_progress" from crashed session → "pending"
+resetOrphanedFeatures()   // in_progress → pending
+resetStaleFeatures(2)     // Stuck > 2 hours → pending
+
+// During runtime:
+if (consecutiveFailures >= 3) {
+  // Circuit breaker trips - prevents runaway failures
+  // Use --force to bypass
+}
 ```
 
 - **Zero manual intervention**
-- **Session table** tracks what was attempted
-- **Graceful degradation**: Just restart and continue
-- **Retry counting**: Auto-fail after 3 attempts
+- **Stale detection**: Features stuck > 2 hours auto-reset
+- **Circuit breaker**: Stops after 3 consecutive session failures
+- **Retry counting**: Auto-fail features after 3 attempts
 
 **Why it matters**: Autonomous agents crash. Recovery should be autonomous too.
 
@@ -265,10 +271,12 @@ chmod:
 ├── Only allow +x (executable)
 └── Block numeric modes (security risk)
 
-rm:
-└── Block recursive flags (-r, -rf)
+rm/cp/mv:
+├── Block recursive deletion (-r, -rf)
+└── Block operations on protected files (.autonomous/protected-files.json)
 ```
 
+- **Protected files**: Config-driven list of files that can't be deleted/overwritten
 - **Defense in depth**: Allowlist isn't enough
 - **Context-aware blocking**: Same command allowed/blocked based on arguments
 - **Fail-safe parsing**: If shell-quote can't parse it, block it
@@ -285,21 +293,23 @@ Agent claims feature complete → mark as passing in JSON
 No verification layer
 ```
 
-### Ours: Database as Source of Truth
+### Ours: Database + UI Verification
 ```typescript
-// During session: track agent's tool calls
-const claimedCompletions = parseToolCalls(response)
+// MCP tools for structured verification:
+verification_checklist(feature)     // Get verification steps
+report_verification_issue(id, type) // Log issues found
+browser_console_messages()          // Check for JS errors
+browser_network_requests()          // Check for failed API calls
 
 // After session: verify against database
 const actualCompletions = db.getKanbanStats()
-
-// Report discrepancy if any
 log(`Claimed: ${claimed} | Verified: ${actual}`)
 ```
 
+- **Verification tools**: Structured checklist + issue reporting via MCP
+- **Console/network checks**: Catch JS errors and failed requests before completion
 - **Dual tracking**: Agent claims vs. database truth
 - **Discrepancy detection**: Catch hallucinated completions
-- **Accurate progress**: Stats always reflect reality
 
 **Why it matters**: Agents can hallucinate. Verification catches lies.
 
@@ -362,13 +372,14 @@ log(`Claimed: ${claimed} | Verified: ${actual}`)
 | Problem | Anthropic's Solution | Our Solution |
 |---------|---------------------|--------------|
 | Agent corrupts state | Hope it doesn't | MCP validation layer |
-| Session crashes | Manual git reset | Auto orphan recovery |
+| Session crashes | Manual git reset | Auto orphan recovery + circuit breaker |
 | Context bloat | Single file grows forever | Scoped notes by category |
-| Slow progress | 1 feature per session | 10 features batched |
+| Slow progress | 1 feature per session | 5 features batched by category |
 | No cost tracking | Unknown spend | Per-session cost + duration |
 | Dev server dies | User restarts | Auto health-check + restart |
-| Agent lies | Trusted | Verified against DB |
-| Dangerous commands | Basic allowlist | Allowlist + semantic validation |
+| Agent lies | Trusted | Verified against DB + UI checks |
+| Dangerous commands | Basic allowlist | Allowlist + semantic + protected files |
+| Repeated failures | Keeps retrying forever | Circuit breaker (3 failures → pause) |
 
 **Bottom line**: Anthropic's harness is a reference implementation. Ours is production-ready.
 

@@ -26,6 +26,8 @@ const PLAYWRIGHT_TOOLS = [
   "mcp__playwright__browser_select",
   "mcp__playwright__browser_hover",
   "mcp__playwright__browser_evaluate",
+  "mcp__playwright__browser_console_messages",
+  "mcp__playwright__browser_network_requests",
 ];
 
 // Features database MCP tools
@@ -37,10 +39,41 @@ const FEATURES_DB_TOOLS = [
   "mcp__features-db__get_notes",
   "mcp__features-db__get_stats",
   "mcp__features-db__list_features",
+  "mcp__features-db__verification_checklist",
+  "mcp__features-db__report_verification_issue",
 ];
 
 // Built-in tools
 const BUILTIN_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"];
+
+interface ProtectedFilesConfig {
+  files?: string[];
+  patterns?: string[];
+}
+
+/**
+ * Load protected files configuration from .autonomous/protected-files.json
+ */
+function loadProtectedFiles(projectDir: string): ProtectedFilesConfig {
+  const configPath = path.join(
+    projectDir,
+    ".autonomous",
+    "protected-files.json"
+  );
+  if (fs.existsSync(configPath)) {
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      return {
+        files: config.files || [],
+        patterns: config.patterns || [],
+      };
+    } catch {
+      // Invalid JSON, return empty config
+      return { files: [], patterns: [] };
+    }
+  }
+  return { files: [], patterns: [] };
+}
 
 export function getClientOptions(
   projectDir: string,
@@ -97,9 +130,15 @@ export function getClientOptions(
     canUseTool: async (toolName: string, input: Record<string, unknown>) => {
       if (toolName === "Bash") {
         const command = input.command as string;
+        // Load protected files config
+        const protectedConfig = loadProtectedFiles(absoluteProjectDir);
         // Pass port context for port-scoped process management
         const validationContext: ValidationContext = {
-          port: env?.AUTONOMOUS_PORT ? parseInt(env.AUTONOMOUS_PORT, 10) : undefined,
+          port: env?.AUTONOMOUS_PORT
+            ? parseInt(env.AUTONOMOUS_PORT, 10)
+            : undefined,
+          protectedFiles: protectedConfig.files,
+          protectedPatterns: protectedConfig.patterns,
         };
         const result = validateBashCommand(command, validationContext);
         if (!result.allowed) {

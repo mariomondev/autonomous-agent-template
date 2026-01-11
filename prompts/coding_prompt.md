@@ -151,6 +151,52 @@ Use get_stats tool
 Use list_features tool with: status="pending"
 ```
 
+### CONSOLE AND NETWORK ERROR DETECTION
+
+Before marking a feature as completed, check for JavaScript and network errors:
+
+**Check Console Errors:**
+```
+Use mcp__playwright__browser_console_messages with level: "error"
+```
+Look for JavaScript errors, unhandled rejections, or warnings.
+
+**Check Network Errors:**
+```
+Use mcp__playwright__browser_network_requests
+```
+Look for failed requests (status 4xx, 5xx) or requests that didn't complete.
+
+**Verification Helpers:**
+| Tool | Purpose |
+|------|---------|
+| `verification_checklist` | Get a checklist of verification steps for a feature |
+| `report_verification_issue` | Log issues found during verification |
+
+**Example Verification Workflow:**
+```
+1. Navigate to feature page
+2. Use browser_console_messages to check for errors
+3. Use browser_network_requests to check for failed API calls
+4. Take screenshot and verify visual appearance
+5. If issues found:
+   - Use report_verification_issue to log the issue
+   - Fix the issue
+   - Re-verify
+6. If all checks pass, mark feature as completed
+```
+
+**Issue Types for report_verification_issue:**
+- `console_error` - JavaScript errors in browser console
+- `network_error` - Failed API calls or 4xx/5xx responses
+- `visual_bug` - Layout, styling, or display issues
+- `functional_bug` - Feature doesn't work as expected
+
+**Severity Levels:**
+- `critical` - Blocks feature completion, must fix
+- `major` - Should fix before completion
+- `minor` - Nice to fix, but not blocking
+
 ### STEP 7: UPDATE DATABASE
 
 **Use MCP tools to update feature status.**
@@ -205,9 +251,9 @@ git commit -m "fix: resolve race condition in data loading; add proper cleanup o
 
 Where type is: feat, fix, refactor, docs, test, chore
 
-### STEP 9: END SESSION (AFTER 10 FEATURES OR WHEN DONE)
+### STEP 9: END SESSION (AFTER 5 FEATURES OR WHEN DONE)
 
-**STOP after completing 10 features** to keep context fresh. You can complete fewer if you encounter issues or context feels cluttered.
+**STOP after completing 5 features** to keep context fresh. You can complete fewer if you encounter issues or context feels cluttered.
 
 Checklist before ending:
 
@@ -222,7 +268,7 @@ Checklist before ending:
 
 ## IMPORTANT REMINDERS
 
-**This Session's Goal:** Complete up to 10 features maximum, then END your session. The orchestrator will start a fresh session to continue.
+**This Session's Goal:** Complete up to 5 features maximum, then END your session. The orchestrator will start a fresh session to continue.
 
 **Priority:** Fix broken tests before implementing new features
 

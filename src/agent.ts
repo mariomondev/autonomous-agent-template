@@ -16,6 +16,7 @@ import {
   startSession,
   endSession,
   resetOrphanedFeatures,
+  resetStaleFeatures,
   hasIncompleteFeatures,
   setFeatureStatus,
   getKanbanStats,
@@ -68,6 +69,7 @@ interface AgentConfig {
   maxIterations: number;
   port: number;
   model: string;
+  force?: boolean; // Bypass circuit breaker
 }
 
 interface FeatureLookup {
@@ -175,6 +177,7 @@ export async function runAutonomousAgent({
   maxIterations,
   port,
   model,
+  force,
 }: AgentConfig): Promise<void> {
   const absoluteProjectDir = path.resolve(projectDir);
 
@@ -212,6 +215,14 @@ export async function runAutonomousAgent({
   const orphaned = resetOrphanedFeatures(absoluteProjectDir);
   if (orphaned > 0) {
     console.log(`Reset ${orphaned} orphaned in_progress features to pending`);
+  }
+
+  // Reset features stuck in 'in_progress' for more than 2 hours
+  const stale = resetStaleFeatures(absoluteProjectDir, 2);
+  if (stale > 0) {
+    console.log(
+      `Reset ${stale} stale features (in_progress > 2 hours) to pending`
+    );
   }
 
   // Check if database has any features
@@ -256,17 +267,30 @@ export async function runAutonomousAgent({
     featuresCompleted: 0,
   };
 
+  // Circuit breaker state
+  let consecutiveFailures = 0;
+  const maxConsecutiveFailures = 3;
+
   // Main loop - continue while there are incomplete features
   while (
     hasIncompleteFeatures(absoluteProjectDir) &&
     iteration < maxIterations
   ) {
+    // Circuit breaker check
+    if (consecutiveFailures >= maxConsecutiveFailures && !force) {
+      console.error(
+        `\n[Circuit Breaker] ${consecutiveFailures} consecutive session failures.`
+      );
+      console.error(`Run with --force to continue, or investigate the issue.`);
+      break;
+    }
+
     iteration++;
 
     const sessionStart = new Date();
 
-    // Generate current_batch.json for this session
-    const batchFeatures = getNextFeatures(absoluteProjectDir, 10);
+    // Generate current_batch.json for this session (max 5 features per batch)
+    const batchFeatures = getNextFeatures(absoluteProjectDir, 5);
     const batchPath = path.join(autonomousDir, "current_batch.json");
     fs.writeFileSync(batchPath, JSON.stringify(batchFeatures, null, 2));
 
@@ -278,7 +302,9 @@ export async function runAutonomousAgent({
     // Compact session header
     const progressStats = getProgressStats(absoluteProjectDir);
     const firstFeature = batchFeatures[0];
-    console.log(`\n[Starting Session ${iteration}] ${progressStats.completed}/${progressStats.total} done | Batch: ${batchFeatures.length} features | Next: "${firstFeature?.name}"`);
+    console.log(
+      `\n[Starting Session ${iteration}] ${progressStats.completed}/${progressStats.total} done | Batch: ${batchFeatures.length} features | Next: "${firstFeature?.name}"`
+    );
 
     // Build feature lookup for live updates
     const featureLookup: FeatureLookup = {};
@@ -312,7 +338,9 @@ export async function runAutonomousAgent({
     });
 
     if (!serverReady) {
-      console.error("[Pre-session] Dev server failed to start. Skipping session.");
+      console.error(
+        "[Pre-session] Dev server failed to start. Skipping session."
+      );
       console.error("Check .autonomous/dev-server.log for details.");
       await sleep(5000);
       continue; // Skip this iteration and retry
@@ -353,7 +381,9 @@ export async function runAutonomousAgent({
 
       // Log discrepancy only if it matters (we observed some but DB differs)
       if (observedCompleted > 0 && observedCompleted !== verifiedCompleted) {
-        console.log(`[Note] Tool tracking: ${observedCompleted}, DB verified: ${verifiedCompleted}`);
+        console.log(
+          `[Note] Tool tracking: ${observedCompleted}, DB verified: ${verifiedCompleted}`
+        );
       }
 
       // Accumulate stats (use verified count from database)
@@ -367,6 +397,9 @@ export async function runAutonomousAgent({
       // Always use verified count from database
       totalStats.featuresCompleted += verifiedCompleted;
 
+      // Reset circuit breaker on success
+      consecutiveFailures = 0;
+
       // End session with stats (use verified count)
       endSession(absoluteProjectDir, sessionId, {
         status: "completed",
@@ -379,6 +412,13 @@ export async function runAutonomousAgent({
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       console.error(`\n[Session ${iteration} Error] ${errMsg}`);
+
+      // Increment circuit breaker counter
+      consecutiveFailures++;
+      console.log(
+        `[Consecutive failures: ${consecutiveFailures}/${maxConsecutiveFailures}]`
+      );
+
       console.log("Retrying in 5s...");
       await sleep(5000);
 
@@ -394,9 +434,13 @@ export async function runAutonomousAgent({
 
     // Compact session summary
     if (sessionStats) {
-      console.log(`\n[Session ${iteration}] ${formatSessionStats(sessionStats, duration)}`);
+      console.log(
+        `\n[Session ${iteration}] ${formatSessionStats(sessionStats, duration)}`
+      );
     } else {
-      console.log(`\n[Session ${iteration}] ${formatDuration(duration)} | failed`);
+      console.log(
+        `\n[Session ${iteration}] ${formatDuration(duration)} | failed`
+      );
     }
 
     // Check if we should continue
@@ -415,9 +459,15 @@ export async function runAutonomousAgent({
   const finalStats = getProgressStats(absoluteProjectDir);
 
   console.log(`\n${"=".repeat(50)}`);
-  console.log(`DONE | ${formatDuration(totalDuration)} | ${iteration} session${iteration > 1 ? "s" : ""} | $${totalStats.costUsd.toFixed(2)}`);
+  console.log(
+    `DONE | ${formatDuration(totalDuration)} | ${iteration} session${
+      iteration > 1 ? "s" : ""
+    } | $${totalStats.costUsd.toFixed(2)}`
+  );
   console.log(`${"=".repeat(50)}`);
-  console.log(`Features: ${finalStats.completed}/${finalStats.total} completed`);
+  console.log(
+    `Features: ${finalStats.completed}/${finalStats.total} completed`
+  );
   console.log(`Log: ${path.join(autonomousDir, "session.log")}`);
 
   if (!hasIncompleteFeatures(absoluteProjectDir)) {
@@ -458,7 +508,11 @@ async function runAgentSession(
   // Open log file for verbose output
   const logStream = fs.createWriteStream(logPath, { flags: "a" });
   const log = (text: string) => logStream.write(text);
-  log(`\n${"=".repeat(60)}\nSession started: ${new Date().toISOString()}\n${"=".repeat(60)}\n\n`);
+  log(
+    `\n${"=".repeat(
+      60
+    )}\nSession started: ${new Date().toISOString()}\n${"=".repeat(60)}\n\n`
+  );
 
   // Stream and display the response
   // Using 'any' to handle SDK type variations
@@ -489,12 +543,20 @@ async function runAgentSession(
 
                 if (feature && status) {
                   const statusIcon =
-                    status === "completed" ? "✓" :
-                    status === "in_progress" ? "→" :
-                    status === "pending" ? "↻" : "✗";
+                    status === "completed"
+                      ? "✓"
+                      : status === "in_progress"
+                      ? "→"
+                      : status === "pending"
+                      ? "↻"
+                      : "✗";
                   // Print to console - this is important status info
-                  console.log(`  [${statusIcon}] Feature ${featureId}: "${feature.name}" → ${status}`);
-                  log(`[${statusIcon}] Feature ${featureId}: "${feature.name}" → ${status}\n`);
+                  console.log(
+                    `  [${statusIcon}] Feature ${featureId}: "${feature.name}" → ${status}`
+                  );
+                  log(
+                    `[${statusIcon}] Feature ${featureId}: "${feature.name}" → ${status}\n`
+                  );
 
                   if (status === "completed") {
                     completedCount++;

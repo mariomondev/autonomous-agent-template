@@ -56,6 +56,7 @@ function parseArgs(): {
   maxIterations: number;
   port: number;
   model: string;
+  force: boolean;
 } {
   const args = process.argv.slice(2);
 
@@ -64,6 +65,7 @@ function parseArgs(): {
   let maxIterations = Infinity;
   let port = 4242;
   let model = MODELS.opus;
+  let force = false;
 
   for (const arg of args) {
     if (arg.startsWith("--max=")) {
@@ -84,6 +86,8 @@ function parseArgs(): {
       const value = arg.slice(8);
       // Check if it's a shorthand or full model ID
       model = MODELS[value] || value;
+    } else if (arg === "--force" || arg === "-f") {
+      force = true;
     } else if (arg.startsWith("--help") || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -97,7 +101,7 @@ function parseArgs(): {
     }
   }
 
-  return { projectDir, maxIterations, port, model };
+  return { projectDir, maxIterations, port, model, force };
 }
 
 function printHelp(): void {
@@ -111,6 +115,7 @@ Options:
   --max=<n>        Maximum iterations (default: unlimited)
   --port=<n>       Dev server port (default: 4242)
   --model=<name>   Model: opus, sonnet, or full model ID (default: opus)
+  --force, -f      Bypass circuit breaker (continue despite consecutive failures)
   --help, -h       Show this help message
 
 Examples:
@@ -118,6 +123,7 @@ Examples:
   bun run start ./my-project --max=10
   bun run start ./my-project --max=5 --port=4243
   bun run start ./my-project --model=sonnet --port=4244
+  bun run start ./my-project --force
 
 Models:
   opus    ${MODELS.opus}
@@ -125,7 +131,7 @@ Models:
 `);
 }
 
-const { projectDir, maxIterations, port, model } = parseArgs();
+const { projectDir, maxIterations, port, model, force } = parseArgs();
 
 console.log("Autonomous Coding Agent");
 console.log("=======================");
@@ -135,6 +141,9 @@ console.log(
 );
 console.log(`Port: ${port}`);
 console.log(`Model: ${model}`);
+if (force) {
+  console.log(`Force: enabled (circuit breaker bypassed)`);
+}
 console.log();
 
 // Clean up port on startup (in case of previous orphaned server)
@@ -171,7 +180,7 @@ process.on("uncaughtException", (error) => {
 });
 
 // Run the agent
-runAutonomousAgent({ projectDir, maxIterations, port, model })
+runAutonomousAgent({ projectDir, maxIterations, port, model, force })
   .then(() => {
     cleanup();
     process.exit(0);

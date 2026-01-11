@@ -88,6 +88,19 @@ export function initDatabase(projectDir: string): Database {
     fs.mkdirSync(autonomousDir, { recursive: true });
   }
 
+  // Create default protected-files.json if it doesn't exist
+  const protectedFilesPath = path.join(autonomousDir, "protected-files.json");
+  if (!fs.existsSync(protectedFilesPath)) {
+    const defaultProtectedFiles = {
+      files: ["package.json", "tsconfig.json", ".gitignore"],
+      patterns: ["*.lock", ".env*"],
+    };
+    fs.writeFileSync(
+      protectedFilesPath,
+      JSON.stringify(defaultProtectedFiles, null, 2)
+    );
+  }
+
   const db = new Database(dbPath);
 
   // Create features table (base schema)
@@ -163,7 +176,7 @@ function getDatabase(projectDir: string): Database {
 }
 
 /**
- * Get the next batch of features to work on (max 10 from same category).
+ * Get the next batch of features to work on (default 5 from same category).
  * Returns features grouped by category, prioritizing categories with pending features.
  */
 export function getNextFeatures(
@@ -601,6 +614,25 @@ export function resetOrphanedFeatures(projectDir: string): number {
       `UPDATE features SET status = 'pending' WHERE status = 'in_progress'`
     )
     .run();
+  return result.changes;
+}
+
+/**
+ * Reset features that have been stuck in 'in_progress' for more than N hours.
+ * This handles edge cases where session records are corrupted or the process was killed.
+ */
+export function resetStaleFeatures(
+  projectDir: string,
+  maxHours: number = 2
+): number {
+  const db = getDatabase(projectDir);
+  const result = db
+    .query(
+      `UPDATE features SET status = 'pending'
+       WHERE status = 'in_progress'
+         AND updated_at < datetime('now', '-' || ? || ' hours')`
+    )
+    .run(maxHours);
   return result.changes;
 }
 

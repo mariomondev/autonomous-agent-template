@@ -336,6 +336,92 @@ server.registerTool(
   }
 );
 
+server.registerTool(
+  "verification_checklist",
+  {
+    description:
+      "Get a checklist of UI verification steps to perform for a feature. Use this before marking a feature as completed.",
+    inputSchema: {
+      feature_name: z.string().describe("Name of the feature being verified"),
+    },
+  },
+  async ({ feature_name }) => {
+    const checklist = `
+UI Verification Checklist for "${feature_name}":
+
+1. VISUAL CHECKS (use browser_screenshot):
+   [ ] No layout overflow or misalignment
+   [ ] Buttons properly spaced and not cut off
+   [ ] Text is readable (no white-on-white, etc.)
+   [ ] No random Unicode characters or broken rendering
+
+2. FUNCTIONAL CHECKS (use browser_click, browser_fill):
+   [ ] All interactive elements respond to clicks
+   [ ] Form inputs accept and display text correctly
+   [ ] Submit actions complete without errors
+
+3. CONSOLE CHECKS (use browser_console_messages):
+   [ ] No JavaScript errors in console
+   [ ] No unhandled promise rejections
+
+4. NETWORK CHECKS (use browser_network_requests):
+   [ ] No 4xx or 5xx HTTP errors
+   [ ] API calls return expected data
+
+If issues are found, use report_verification_issue to log them.
+`;
+    return {
+      content: [{ type: "text" as const, text: checklist }],
+    };
+  }
+);
+
+server.registerTool(
+  "report_verification_issue",
+  {
+    description:
+      "Report a verification issue found during testing. This logs the issue as a note on the feature.",
+    inputSchema: {
+      feature_id: z.number().describe("The feature ID with the issue"),
+      issue_type: z
+        .enum([
+          "console_error",
+          "network_error",
+          "visual_bug",
+          "functional_bug",
+        ])
+        .describe("Type of issue found"),
+      description: z.string().describe("Description of the issue"),
+      severity: z
+        .enum(["critical", "major", "minor"])
+        .describe("Issue severity - critical blocks completion"),
+    },
+  },
+  async ({ feature_id, issue_type, description, severity }) => {
+    // Log the issue as a note on the feature
+    addNote(projectDir, {
+      featureId: feature_id,
+      category: null,
+      content: `[${issue_type}/${severity}] ${description}`,
+      sessionId,
+    });
+
+    const action =
+      severity === "critical"
+        ? "Feature should be marked for retry."
+        : "Consider fixing before marking complete.";
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `Issue logged for feature ${feature_id}: [${issue_type}/${severity}] ${description}\n${action}`,
+        },
+      ],
+    };
+  }
+);
+
 // Start the server
 async function main() {
   const transport = new StdioServerTransport();
