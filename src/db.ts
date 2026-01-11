@@ -186,12 +186,13 @@ export function getNextFeatures(
   const db = getDatabase(projectDir);
 
   // Find the first category that has pending features
+  // Order by MIN(id) so categories are processed in feature ID order, not alphabetically
   const categoryQuery = db.query(`
-    SELECT category, COUNT(*) as count
+    SELECT category, COUNT(*) as count, MIN(id) as first_id
     FROM features
     WHERE status = 'pending'
     GROUP BY category
-    ORDER BY category ASC
+    ORDER BY first_id ASC
     LIMIT 1
   `);
 

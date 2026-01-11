@@ -116,6 +116,15 @@ export async function startDevServer(
     return null;
   }
 
+  // Verify port is free before starting
+  const portStatus = await checkDevServer(port);
+  if (portStatus.running) {
+    console.error(
+      `[Dev Server] Port ${port} is still in use by PID ${portStatus.pid}. Cannot start.`
+    );
+    return null;
+  }
+
   // Create log file for server output
   const autonomousDir = path.join(projectDir, ".autonomous");
   if (!fs.existsSync(autonomousDir)) {
@@ -123,13 +132,13 @@ export async function startDevServer(
   }
   const logFile = path.join(autonomousDir, "dev-server.log");
 
-  // Clear previous log
-  fs.writeFileSync(
+  // Append to log (preserve history across sessions)
+  fs.appendFileSync(
     logFile,
-    `--- Dev server started at ${new Date().toISOString()} ---\n`
+    `\n--- Dev server started at ${new Date().toISOString()} ---\n` +
+      `--- Command: ${command} ---\n` +
+      `--- Port: ${port} ---\n\n`
   );
-
-  // Silent start - logs go to dev-server.log
 
   // Spawn the dev server
   const [cmd, ...args] = command.split(" ");
@@ -223,24 +232,65 @@ export async function stopDevServer(port: number): Promise<boolean> {
 }
 
 /**
+ * Check if a server is responding to HTTP requests.
+ */
+async function isServerResponding(port: number): Promise<boolean> {
+  try {
+    const response = await fetch(`http://localhost:${port}`, {
+      method: "HEAD",
+      signal: AbortSignal.timeout(3000),
+    });
+    return response.status > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Ensure the dev server is running. Starts it if not.
  * Returns true if server is ready, false if failed.
+ *
+ * If a process is on the port but not responding to HTTP, it will be killed
+ * and a new server started.
  */
 export async function ensureDevServer(
   options: DevServerOptions
 ): Promise<boolean> {
   const { port, timeout = 30000 } = options;
 
-  // Check if already running
+  // Check if something is already running on the port
   const status = await checkDevServer(port);
+
   if (status.running) {
-    return true;
+    // Verify it's actually responding to HTTP requests
+    const responding = await isServerResponding(port);
+
+    if (responding) {
+      // Server is up and responding - we're good
+      return true;
+    }
+
+    // Process exists but not responding - kill it and restart
+    console.log(
+      `[Dev Server] Port ${port} occupied but not responding. Killing PID ${status.pid}...`
+    );
+    const stopped = await stopDevServer(port);
+    if (!stopped) {
+      console.error(
+        `[Dev Server] Failed to stop existing process on port ${port}`
+      );
+      return false;
+    }
+    // Small delay to ensure port is released
+    await sleep(1000);
   }
 
   // Start the server
   const result = await startDevServer(options);
   if (!result) {
-    console.error(`[Dev Server] Failed to start. Check .autonomous/dev-server.log`);
+    console.error(
+      `[Dev Server] Failed to start. Check .autonomous/dev-server.log`
+    );
     return false;
   }
 
@@ -248,6 +298,32 @@ export async function ensureDevServer(
   const ready = await waitForServer(port, timeout);
   if (!ready) {
     console.error(`[Dev Server] Timed out. Check .autonomous/dev-server.log`);
+
+    // Check if the process is still running but failed to bind
+    const postStatus = await checkDevServer(port);
+    if (!postStatus.running) {
+      console.error(
+        `[Dev Server] Process exited - likely port conflict or startup error.`
+      );
+      console.error(`Check .autonomous/dev-server.log for details.`);
+
+      // Check if server accidentally started on a different port (common issue)
+      const commonPorts = [3000, 3001, 5173, 8080];
+      for (const altPort of commonPorts) {
+        if (altPort !== port) {
+          const altStatus = await checkDevServer(altPort);
+          if (altStatus.running) {
+            console.error(
+              `[Dev Server] Found server on port ${altPort} instead of ${port}.`
+            );
+            console.error(
+              `The project may not respect the PORT env var. Check package.json or config files.`
+            );
+            break;
+          }
+        }
+      }
+    }
   }
   return ready;
 }
