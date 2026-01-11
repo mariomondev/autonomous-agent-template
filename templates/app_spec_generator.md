@@ -1,6 +1,12 @@
 # App Spec Generator
 
-Use this prompt with any LLM to generate a project-specific `app_spec.txt` file.
+Use this prompt with any LLM to generate your project specification.
+
+**Output:** Save the generated content to `.autonomous/app_spec.txt`
+
+```bash
+mkdir -p .autonomous  # Create folder if needed
+```
 
 ---
 

@@ -1,6 +1,12 @@
 # Feature List Generator
 
-Use this prompt with any LLM to generate `features.sql` from your `app_spec.txt`.
+Use this prompt with any LLM to generate your feature database.
+
+**Output:** Save the generated SQL to `.autonomous/features.sql`
+
+```bash
+mkdir -p .autonomous  # Create folder if needed
+```
 
 ---
 
