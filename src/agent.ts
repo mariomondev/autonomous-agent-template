@@ -70,6 +70,7 @@ interface AgentConfig {
   port: number;
   model: string;
   force?: boolean; // Bypass circuit breaker
+  headless?: boolean; // Run browser headless (default: true)
 }
 
 interface FeatureLookup {
@@ -178,6 +179,7 @@ export async function runAutonomousAgent({
   port,
   model,
   force,
+  headless = true,
 }: AgentConfig): Promise<void> {
   const absoluteProjectDir = path.resolve(projectDir);
 
@@ -355,6 +357,7 @@ export async function runAutonomousAgent({
       AUTONOMOUS_SESSION_ID: String(sessionId),
       AUTONOMOUS_TEMPLATE_DIR: TEMPLATE_DIR,
       AUTONOMOUS_PORT: String(port),
+      AUTONOMOUS_HEADLESS: headless ? "true" : "false",
     };
 
     let sessionStats: SessionStats | null = null;

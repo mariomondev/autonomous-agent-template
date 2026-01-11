@@ -92,6 +92,9 @@ export function getClientOptions(
     JSON.stringify({ outputDir: playwrightOutputDir }, null, 2)
   );
 
+  // Check if headless mode (default: true)
+  const isHeadless = env?.AUTONOMOUS_HEADLESS !== "false";
+
   // Security config is silent - details available via --verbose flag if needed
 
   return {
@@ -111,7 +114,14 @@ export function getClientOptions(
     mcpServers: {
       playwright: {
         command: "npx",
-        args: ["@playwright/mcp@latest", "--config", playwrightConfigPath],
+        args: isHeadless
+          ? [
+              "@playwright/mcp@latest",
+              "--headless",
+              "--config",
+              playwrightConfigPath,
+            ]
+          : ["@playwright/mcp@latest", "--config", playwrightConfigPath],
       },
       "features-db": {
         command: "bun",

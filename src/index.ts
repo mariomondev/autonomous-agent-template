@@ -7,14 +7,15 @@
  *   bun run start <project-dir> [options]
  *
  * Options:
- *   --max=<n>        Maximum iterations (default: unlimited)
- *   --port=<n>       Dev server port (default: 4242)
- *   --model=<name>   Model to use: opus, sonnet, or full model ID (default: opus)
+ *   --max=<n>           Maximum iterations (default: unlimited)
+ *   --port=<n>          Dev server port (default: 4242)
+ *   --model=<name>      Model to use: opus, sonnet, or full model ID (default: opus)
+ *   --headless=<bool>   Run browser headless (default: true)
  *
  * Examples:
  *   bun run start ./my-project
  *   bun run start ./my-project --max=10
- *   bun run start ./my-project --max=5 --port=4243
+ *   bun run start ./my-project --headless=false
  *   bun run start ./my-project --model=sonnet --port=4244
  */
 
@@ -57,6 +58,7 @@ function parseArgs(): {
   port: number;
   model: string;
   force: boolean;
+  headless: boolean;
 } {
   const args = process.argv.slice(2);
 
@@ -66,6 +68,7 @@ function parseArgs(): {
   let port = 4242;
   let model = MODELS.opus;
   let force = false;
+  let headless = true; // Default: headless mode
 
   for (const arg of args) {
     if (arg.startsWith("--max=")) {
@@ -88,6 +91,9 @@ function parseArgs(): {
       model = MODELS[value] || value;
     } else if (arg === "--force" || arg === "-f") {
       force = true;
+    } else if (arg.startsWith("--headless=")) {
+      const value = arg.slice(11).toLowerCase();
+      headless = value === "true";
     } else if (arg.startsWith("--help") || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -101,7 +107,7 @@ function parseArgs(): {
     }
   }
 
-  return { projectDir, maxIterations, port, model, force };
+  return { projectDir, maxIterations, port, model, force, headless };
 }
 
 function printHelp(): void {
@@ -112,18 +118,18 @@ Usage:
   bun run start <project-dir> [options]
 
 Options:
-  --max=<n>        Maximum iterations (default: unlimited)
-  --port=<n>       Dev server port (default: 4242)
-  --model=<name>   Model: opus, sonnet, or full model ID (default: opus)
-  --force, -f      Bypass circuit breaker (continue despite consecutive failures)
-  --help, -h       Show this help message
+  --max=<n>           Maximum iterations (default: unlimited)
+  --port=<n>          Dev server port (default: 4242)
+  --model=<name>      Model: opus, sonnet, or full model ID (default: opus)
+  --headless=<bool>   Run browser headless (default: true)
+  --force, -f         Bypass circuit breaker (continue despite consecutive failures)
+  --help, -h          Show this help message
 
 Examples:
   bun run start ./my-project
   bun run start ./my-project --max=10
-  bun run start ./my-project --max=5 --port=4243
+  bun run start ./my-project --headless=false
   bun run start ./my-project --model=sonnet --port=4244
-  bun run start ./my-project --force
 
 Models:
   opus    ${MODELS.opus}
@@ -131,7 +137,7 @@ Models:
 `);
 }
 
-const { projectDir, maxIterations, port, model, force } = parseArgs();
+const { projectDir, maxIterations, port, model, force, headless } = parseArgs();
 
 console.log("Autonomous Coding Agent");
 console.log("=======================");
@@ -141,6 +147,7 @@ console.log(
 );
 console.log(`Port: ${port}`);
 console.log(`Model: ${model}`);
+console.log(`Browser: ${headless ? "headless" : "headed"}`);
 if (force) {
   console.log(`Force: enabled (circuit breaker bypassed)`);
 }
@@ -180,7 +187,7 @@ process.on("uncaughtException", (error) => {
 });
 
 // Run the agent
-runAutonomousAgent({ projectDir, maxIterations, port, model, force })
+runAutonomousAgent({ projectDir, maxIterations, port, model, force, headless })
   .then(() => {
     cleanup();
     process.exit(0);

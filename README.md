@@ -29,10 +29,11 @@ The agent will implement a counter app from scratch: display, increment button, 
 bun run start ./your-project [options]
 
 # Options:
-#   --max=<n>      Max iterations (default: unlimited)
-#   --port=<n>     Dev server port (default: 4242)
-#   --model=<name> opus, sonnet, or full model ID (default: opus)
-#   --force        Bypass circuit breaker (continue despite failures)
+#   --max=<n>          Max iterations (default: unlimited)
+#   --port=<n>         Dev server port (default: 4242)
+#   --model=<name>     opus, sonnet, or full model ID (default: opus)
+#   --headless=<bool>  Run browser headless (default: true)
+#   --force            Bypass circuit breaker (continue despite failures)
 ```
 
 ---
@@ -70,7 +71,7 @@ bun run start ./your-project  # Start the agent
 1. Queries `db.sqlite` for next batch of features (max 5 from same category)
 2. Starts dev server on port 4242
 3. Implements features following your patterns
-4. Verifies with Playwright browser automation
+4. Verifies with Playwright browser automation (headless by default)
 5. Updates feature status via MCP tools
 6. Repeats until all features complete
 
