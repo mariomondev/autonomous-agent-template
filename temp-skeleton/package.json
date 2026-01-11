@@ -1,0 +1,8 @@
+{
+  "name": "test-project",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "bunx serve -l ${PORT:-4242}"
+  },
+  "devDependencies": {}
+}

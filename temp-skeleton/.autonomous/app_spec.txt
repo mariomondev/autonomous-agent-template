@@ -1,0 +1,14 @@
+# Test App Specification
+
+A minimal counter web app to test the autonomous agent harness.
+
+## Features
+- Display a counter value starting at 0
+- Button to increment the counter
+- Button to decrement the counter
+- Counter value persists in localStorage
+
+## Tech Stack
+- Plain HTML/CSS/JavaScript
+- No build tools required
+- Served with `bunx serve`
