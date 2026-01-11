@@ -109,11 +109,15 @@ export function initDatabase(projectDir: string): Database {
   `);
 
   // Migration: Add retry_count column if missing (for existing databases)
-  const columns = db.query("PRAGMA table_info(features)").all() as Array<{ name: string }>;
+  const columns = db.query("PRAGMA table_info(features)").all() as Array<{
+    name: string;
+  }>;
   const columnNames = columns.map((c) => c.name);
 
   if (!columnNames.includes("retry_count")) {
-    db.exec(`ALTER TABLE features ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`);
+    db.exec(
+      `ALTER TABLE features ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`
+    );
   }
 
   // Create notes table
@@ -219,7 +223,6 @@ export function getNextFeatures(
   }));
 }
 
-
 /**
  * Check if there are any incomplete features (pending or in_progress).
  */
@@ -233,7 +236,6 @@ export function hasIncompleteFeatures(projectDir: string): boolean {
   const result = countQuery.get() as { count: number };
   return result.count > 0;
 }
-
 
 /**
  * Get progress statistics.
@@ -423,7 +425,7 @@ export function getFeaturesByStatus(
 }
 
 /**
- * Get the currently in-progress feature (if any).
+ * Get the currently in_progress feature (if any).
  */
 export function getCurrentFeature(projectDir: string): Feature | null {
   const db = getDatabase(projectDir);

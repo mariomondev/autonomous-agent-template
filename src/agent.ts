@@ -21,6 +21,7 @@ import {
   getKanbanStats,
   getNotesForFeature,
 } from "./db.js";
+import { ensureDevServer } from "./dev-server.js";
 import fs from "fs";
 import path from "path";
 
@@ -110,7 +111,8 @@ function buildSessionContext(
     in_progress: number;
     completed: number;
     failed: number;
-  }
+  },
+  port: number
 ): string {
   const category = batchFeatures[0]?.category || "uncategorized";
   const notes = getRelevantNotes(projectDir, category);
@@ -130,6 +132,10 @@ function buildSessionContext(
 
   return `
 ## SESSION CONTEXT
+
+### Environment
+- **Dev server:** Running on http://localhost:${port} (managed by orchestrator)
+- **Project directory:** Working directory is the target project
 
 ### Your Assignment (${batchFeatures.length} features from "${category}" category)
 
@@ -152,6 +158,7 @@ interface SessionStats {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   costUsd: number;
+  featuresCompleted: number;
 }
 
 /**
@@ -232,7 +239,7 @@ export async function runAutonomousAgent({
   }
   // Load prompt and replace port placeholder
   let codingPrompt = fs.readFileSync(promptPath, "utf-8");
-  codingPrompt = codingPrompt.replace(/4242/g, String(port));
+  codingPrompt = codingPrompt.replace(/\{\{PORT\}\}/g, String(port));
 
   let iteration = 0;
   const totalStart = new Date();
@@ -244,6 +251,7 @@ export async function runAutonomousAgent({
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
     costUsd: 0,
+    featuresCompleted: 0,
   };
 
   // Main loop - continue while there are incomplete features
@@ -292,11 +300,30 @@ export async function runAutonomousAgent({
     const sessionContext = buildSessionContext(
       absoluteProjectDir,
       batchFeatures,
-      kanbanStats
+      kanbanStats,
+      port
     );
     const enrichedPrompt = sessionContext + codingPrompt;
 
+    // Capture pre-session completed count for verification
+    const preSessionCompleted = kanbanStats.completed;
+
     console.log();
+
+    // Ensure dev server is running before starting session
+    console.log("[Pre-session] Checking dev server...");
+    const serverReady = await ensureDevServer({
+      projectDir: absoluteProjectDir,
+      port,
+      timeout: 60000, // 60 seconds to start
+    });
+
+    if (!serverReady) {
+      console.error("[Pre-session] Dev server failed to start. Skipping session.");
+      console.error("Check .autonomous/dev-server.log for details.");
+      await sleep(5000);
+      continue; // Skip this iteration and retry
+    }
 
     // Create session record
     const sessionId = startSession(absoluteProjectDir);
@@ -306,6 +333,7 @@ export async function runAutonomousAgent({
       AUTONOMOUS_PROJECT_DIR: absoluteProjectDir,
       AUTONOMOUS_SESSION_ID: String(sessionId),
       AUTONOMOUS_TEMPLATE_DIR: TEMPLATE_DIR,
+      AUTONOMOUS_PORT: String(port),
     };
 
     let sessionStats: SessionStats | null = null;
@@ -320,7 +348,21 @@ export async function runAutonomousAgent({
         featureLookup
       );
 
-      // Accumulate stats
+      // Verify actual completions from database (source of truth)
+      const postSessionStats = getKanbanStats(absoluteProjectDir);
+      const verifiedCompleted =
+        postSessionStats.completed - preSessionCompleted;
+      const observedCompleted = sessionStats?.featuresCompleted ?? 0;
+
+      // Log discrepancy if observed doesn't match verified
+      if (observedCompleted !== verifiedCompleted) {
+        console.log(
+          `\n[Verification] Observed ${observedCompleted} completions from tool calls, ` +
+            `but database shows ${verifiedCompleted}. Using verified count.`
+        );
+      }
+
+      // Accumulate stats (use verified count from database)
       if (sessionStats) {
         totalStats.inputTokens += sessionStats.inputTokens;
         totalStats.outputTokens += sessionStats.outputTokens;
@@ -328,14 +370,14 @@ export async function runAutonomousAgent({
         totalStats.cacheWriteTokens += sessionStats.cacheWriteTokens;
         totalStats.costUsd += sessionStats.costUsd;
       }
+      // Always use verified count from database
+      totalStats.featuresCompleted += verifiedCompleted;
 
-      // End session with stats
+      // End session with stats (use verified count)
       endSession(absoluteProjectDir, sessionId, {
         status: "completed",
         features_attempted: batchFeatures.length,
-        features_completed: sessionStats?.outputTokens
-          ? batchFeatures.length
-          : 0, // rough estimate
+        features_completed: verifiedCompleted,
         input_tokens: sessionStats?.inputTokens,
         output_tokens: sessionStats?.outputTokens,
         cost_usd: sessionStats?.costUsd,
@@ -469,6 +511,7 @@ async function runAgentSession(
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
     costUsd: 0,
+    featuresCompleted: 0,
   };
 
   // Track completed features for live updates
@@ -496,7 +539,8 @@ async function runAgentSession(
 
       case "tool_call":
         // Check for feature_status MCP tool for live updates
-        if (msg.tool_name === "feature_status" && msg.tool_input) {
+        // Tool name is prefixed: mcp__features-db__feature_status
+        if (msg.tool_name?.endsWith("feature_status") && msg.tool_input) {
           const input = msg.tool_input;
           const featureId = input.feature_id;
           const status = input.status;
@@ -517,6 +561,7 @@ async function runAgentSession(
 
             if (status === "completed") {
               completedCount++;
+              stats.featuresCompleted = completedCount;
               console.log(
                 `    Progress: ${completedCount}/${totalInBatch} features completed this session`
               );

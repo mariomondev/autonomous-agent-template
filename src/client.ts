@@ -8,7 +8,7 @@
  * Claude Code automatically reads CLAUDE.md files.
  */
 
-import { validateBashCommand } from "./security.js";
+import { validateBashCommand, type ValidationContext } from "./security.js";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -113,6 +113,7 @@ export function getClientOptions(
         env: {
           AUTONOMOUS_PROJECT_DIR: absoluteProjectDir,
           AUTONOMOUS_SESSION_ID: String(env?.AUTONOMOUS_SESSION_ID || "0"),
+          AUTONOMOUS_PORT: String(env?.AUTONOMOUS_PORT || "4242"),
         },
       },
     },
@@ -123,7 +124,11 @@ export function getClientOptions(
     canUseTool: async (toolName: string, input: Record<string, unknown>) => {
       if (toolName === "Bash") {
         const command = input.command as string;
-        const result = validateBashCommand(command);
+        // Pass port context for port-scoped process management
+        const validationContext: ValidationContext = {
+          port: env?.AUTONOMOUS_PORT ? parseInt(env.AUTONOMOUS_PORT, 10) : undefined,
+        };
+        const result = validateBashCommand(command, validationContext);
         if (!result.allowed) {
           const reason = result.reason || "Command not allowed";
           console.log(`[BLOCKED] ${reason}`);

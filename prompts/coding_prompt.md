@@ -4,7 +4,7 @@ You are continuing work on a long-running autonomous development task.
 This is a FRESH context window - you have no memory of previous sessions.
 You are working on an **existing project template** with established patterns.
 
-**IMPORTANT:** Agent files are in `.autonomous/` directory. Dev server runs on port **4242**.
+**IMPORTANT:** Agent files are in `.autonomous/` directory. Dev server runs on port **{{PORT}}**.
 
 **NOTE:** The SESSION CONTEXT section above contains:
 - Your assigned features for this session
@@ -24,21 +24,16 @@ Then explore the existing codebase:
 
 **This project uses an existing template with established patterns.** Match the coding style, component patterns, and conventions already in the codebase.
 
-### STEP 2: START DEV SERVER (IF NOT RUNNING)
+### STEP 2: VERIFY DEV SERVER IS RUNNING
 
-Start the development server on port 4242:
+**The orchestrator has already started the dev server on port {{PORT}}.**
 
-```bash
-PORT=4242 bun run dev
-```
+Verify it's responding by navigating to `http://localhost:{{PORT}}` with Playwright and taking a screenshot.
 
-Or for Next.js:
-
-```bash
-bun run dev --port 4242
-```
-
-Check if already running with `lsof -i :4242`.
+**If the server is not responding:**
+- Check the log file: `.autonomous/dev-server.log`
+- The orchestrator may need to restart - add a `global_note` describing the issue
+- Do NOT try to start the server yourself - the orchestrator manages it
 
 ### STEP 3: VERIFICATION TEST (CRITICAL!)
 
@@ -75,11 +70,11 @@ Implement the chosen feature thoroughly:
 ### STEP 6: VERIFY WITH BROWSER AUTOMATION
 
 **CRITICAL:** You MUST verify features through the actual UI using Playwright tools.
-**The app runs on http://localhost:4242**
+**The app runs on http://localhost:{{PORT}}**
 
 **Available Playwright Tools:**
 
-- `mcp__playwright__browser_navigate` - Go to URL (use http://localhost:4242)
+- `mcp__playwright__browser_navigate` - Go to URL (use http://localhost:{{PORT}})
 - `mcp__playwright__browser_screenshot` - Capture current state
 - `mcp__playwright__browser_click` - Click elements
 - `mcp__playwright__browser_fill` - Type into inputs
@@ -89,7 +84,7 @@ Implement the chosen feature thoroughly:
 
 **DO:**
 
-- Navigate to http://localhost:4242
+- Navigate to http://localhost:{{PORT}}
 - Interact like a human user (click, type, scroll)
 - Take screenshots at each step
 - Verify both functionality AND visual appearance
@@ -231,7 +226,7 @@ Checklist before ending:
 
 **Priority:** Fix broken tests before implementing new features
 
-**Port:** Always use port 4242 for the dev server
+**Port:** Always use port {{PORT}} for the dev server
 
 **You Have Unlimited Time:** Don't rush. If you need to refactor or fix issues, do it properly. Quality over speed.
 

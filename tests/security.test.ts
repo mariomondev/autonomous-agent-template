@@ -134,32 +134,49 @@ const testCases: TestCase[] = [
   },
   { name: "rm -rvf (blocked)", command: "rm -rvf folder", shouldAllow: false },
 
-  // ===== PKILL (SENSITIVE) =====
-  { name: "pkill node", command: "pkill node", shouldAllow: true },
-  { name: "pkill npm", command: "pkill npm", shouldAllow: true },
-  { name: "pkill vite", command: "pkill vite", shouldAllow: true },
-  { name: "pkill next", command: "pkill next", shouldAllow: true },
-  { name: "pkill bun", command: "pkill bun", shouldAllow: true },
-  { name: "pkill -9 node", command: "pkill -9 node", shouldAllow: true },
+  // ===== PKILL (REQUIRES PORT-SPECIFIC PATTERN) =====
+  // Plain pkill without -f is now blocked (too dangerous)
   {
-    name: "pkill -f 'node server'",
-    command: "pkill -f 'node server.js'",
-    shouldAllow: true,
-  },
-  {
-    name: "pkill -f 'bun run'",
-    command: "pkill -f 'bun run dev'",
-    shouldAllow: true,
-  },
-  { name: "pkill bash (blocked)", command: "pkill bash", shouldAllow: false },
-  {
-    name: "pkill python (blocked)",
-    command: "pkill python",
+    name: "pkill node (blocked - no port)",
+    command: "pkill node",
     shouldAllow: false,
   },
   {
-    name: "pkill -9 bash (blocked)",
-    command: "pkill -9 bash",
+    name: "pkill -9 node (blocked - no port)",
+    command: "pkill -9 node",
+    shouldAllow: false,
+  },
+  // pkill -f with generic patterns is blocked
+  {
+    name: "pkill -f 'node server' (blocked - no port)",
+    command: "pkill -f 'node server.js'",
+    shouldAllow: false,
+  },
+  {
+    name: "pkill -f 'bun run' (blocked - no port)",
+    command: "pkill -f 'bun run dev'",
+    shouldAllow: false,
+  },
+  // pkill -f with port-specific patterns is allowed
+  {
+    name: "pkill -f port pattern",
+    command: "pkill -f '.*:4242.*'",
+    shouldAllow: true,
+  },
+  {
+    name: "pkill -f PORT= pattern",
+    command: "pkill -f 'PORT=4242'",
+    shouldAllow: true,
+  },
+  {
+    name: "pkill -9 -f port pattern",
+    command: "pkill -9 -f ':3000'",
+    shouldAllow: true,
+  },
+  // Other processes still blocked
+  {
+    name: "pkill bash (blocked)",
+    command: "pkill bash",
     shouldAllow: false,
   },
   {
@@ -228,7 +245,9 @@ const testCases: TestCase[] = [
     shouldAllow: false,
   },
   { name: "iptables (blocked)", command: "iptables -L", shouldAllow: false },
-  { name: "kill (blocked)", command: "kill -9 1234", shouldAllow: false },
+  // kill is now allowed (for lsof -ti :PORT | xargs kill pattern)
+  { name: "kill (allowed)", command: "kill -9 1234", shouldAllow: true },
+  { name: "xargs kill", command: "lsof -ti :4242 | xargs kill", shouldAllow: true },
   { name: "killall (blocked)", command: "killall node", shouldAllow: false },
 
   // ===== DANGEROUS PATTERNS =====
@@ -256,6 +275,43 @@ const testCases: TestCase[] = [
     name: "npm run with complex args",
     command: 'npm run build -- --mode="production"',
     shouldAllow: true,
+  },
+
+  // ===== GIT COMMIT MESSAGE VALIDATION =====
+  {
+    name: "git commit -m no space",
+    command: 'git commit -m"feat: add feature"',
+    shouldAllow: true,
+  },
+  {
+    name: "git commit single quotes no space",
+    command: "git commit -m'fix: bug'",
+    shouldAllow: true,
+  },
+  {
+    name: "git commit multiple -m flags (blocked)",
+    command: 'git commit -m "line1" -m "line2"',
+    shouldAllow: false,
+  },
+  {
+    name: "git commit multiple -m no space (blocked)",
+    command: 'git commit -m"line1" -m"line2"',
+    shouldAllow: false,
+  },
+  {
+    name: "git commit heredoc (blocked)",
+    command: "git commit -m \"$(cat <<EOF\nmessage\nEOF\n)\"",
+    shouldAllow: false,
+  },
+  {
+    name: "git commit Co-Authored-By (blocked)",
+    command: 'git commit -m "feat: add feature\n\nCo-Authored-By: Name <email>"',
+    shouldAllow: false,
+  },
+  {
+    name: "git commit Feature ref (blocked)",
+    command: 'git commit -m "feat: add feature\n\nFeature: #123"',
+    shouldAllow: false,
   },
 
   // ===== EDGE CASES =====

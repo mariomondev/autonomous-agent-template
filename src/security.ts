@@ -43,17 +43,28 @@ const ALLOWED_COMMANDS = new Set([
   "ps",
   "lsof",
   "sleep",
-  "pkill", // For killing dev servers; validated separately
+  "pkill", // For killing dev servers; validated separately to require port-specific patterns
+  "kill", // For use with lsof: lsof -ti :PORT | xargs kill
+  "xargs", // For piping: lsof -ti :PORT | xargs kill
   // Build tools
   "tsc",
   "vite",
   "next",
 ]);
 
+// Forward declaration for ValidationContext (defined below)
+interface SensitiveCommandContext {
+  port?: number;
+}
+
 // Commands that need additional validation even when in the allowlist
 const SENSITIVE_COMMANDS: Record<
   string,
-  (args: string[], fullCommand: string) => { allowed: boolean; reason?: string }
+  (
+    args: string[],
+    fullCommand: string,
+    context?: SensitiveCommandContext
+  ) => { allowed: boolean; reason?: string }
 > = {
   /**
    * git - Validate commit message format
@@ -92,7 +103,8 @@ const SENSITIVE_COMMANDS: Record<
     }
 
     // Only allow single -m flag (one line)
-    const mFlagCount = (fullCommand.match(/-m\s/g) || []).length;
+    // Match -m followed by space, quote, or end (handles -m "msg", -m"msg", -m 'msg')
+    const mFlagCount = (fullCommand.match(/-m[\s"']/g) || []).length;
     if (mFlagCount > 1) {
       return {
         allowed: false,
@@ -129,25 +141,28 @@ const SENSITIVE_COMMANDS: Record<
   },
 
   /**
-   * pkill - Only allow killing dev processes
-   * Must handle: pkill node, pkill -f "node server.js", pkill -9 vite
+   * pkill - Only allow killing processes on the session's port
+   * Requires -f flag with a pattern containing the port number.
+   * This prevents killing unrelated processes on the system.
+   *
+   * Allowed: pkill -f ".*:4242.*", pkill -f "PORT=4242"
+   * Blocked: pkill node, pkill -f "node" (too broad)
    */
-  pkill: (args, _fullCommand) => {
-    const allowedProcesses = [
-      "node",
-      "npm",
-      "npx",
-      "vite",
-      "next",
-      "pnpm",
-      "yarn",
-      "bun",
-      "bunx",
-    ];
+  pkill: (args, _fullCommand, context) => {
+    const port = context?.port;
 
-    // Find the process name (non-flag argument)
-    // Also handle -f patterns like "node server.js"
-    let targetProcess: string | null = null;
+    // Must use -f flag for pattern matching
+    const hasFFlag = args.includes("-f");
+    if (!hasFFlag) {
+      return {
+        allowed: false,
+        reason:
+          "pkill must use -f flag with a port-specific pattern. Use: pkill -f '.*:PORT.*' or 'lsof -ti :PORT | xargs kill'",
+      };
+    }
+
+    // Find the pattern argument (comes after -f or other flags)
+    let pattern: string | null = null;
     let nextIsPattern = false;
 
     for (const arg of args) {
@@ -155,40 +170,50 @@ const SENSITIVE_COMMANDS: Record<
         nextIsPattern = true;
         continue;
       }
-      if (nextIsPattern) {
-        // For -f, the pattern might be quoted like "node server.js"
-        // Check if any allowed process is in the pattern
-        const patternLower = arg.toLowerCase();
-        const isAllowed = allowedProcesses.some(
-          (proc) => patternLower === proc || patternLower.startsWith(proc + " ")
-        );
-        if (isAllowed) {
-          return { allowed: true };
-        }
-        targetProcess = arg;
-        nextIsPattern = false;
-        continue;
+      if (nextIsPattern && !arg.startsWith("-")) {
+        pattern = arg;
+        break;
       }
-      // Skip flags
+      // Skip other flags like -9, -TERM, etc.
       if (arg.startsWith("-")) {
         continue;
       }
-      // This should be the process name
-      targetProcess = arg;
+      // Non-flag after -f is the pattern
+      if (nextIsPattern) {
+        pattern = arg;
+        break;
+      }
     }
 
-    if (!targetProcess) {
-      return { allowed: false, reason: "pkill requires a process name" };
+    if (!pattern) {
+      return {
+        allowed: false,
+        reason: "pkill -f requires a pattern argument",
+      };
     }
 
-    const isAllowed = allowedProcesses.includes(targetProcess.toLowerCase());
+    // If we have a port context, the pattern must contain it
+    if (port) {
+      const portStr = String(port);
+      if (!pattern.includes(portStr)) {
+        return {
+          allowed: false,
+          reason: `pkill pattern must include the session port (${port}) to avoid killing unrelated processes. Use: pkill -f '.*:${port}.*' or 'lsof -ti :${port} | xargs kill'`,
+        };
+      }
+      return { allowed: true };
+    }
+
+    // No port context - be restrictive, only allow if pattern looks port-specific
+    // Pattern should contain a colon followed by digits (port pattern)
+    if (/:\d+/.test(pattern) || /PORT=\d+/.test(pattern)) {
+      return { allowed: true };
+    }
+
     return {
-      allowed: isAllowed,
-      reason: isAllowed
-        ? undefined
-        : `pkill only allowed for dev processes: ${allowedProcesses.join(
-            ", "
-          )}. Got: ${targetProcess}`,
+      allowed: false,
+      reason:
+        "pkill pattern must be port-specific (e.g., '.*:4242.*'). Use 'lsof -ti :PORT | xargs kill' for safer process termination.",
     };
   },
 
@@ -340,8 +365,10 @@ function extractCommandsWithArgs(
         continue;
       }
 
-      // Skip variable assignments (VAR=value)
-      if (token.includes("=") && !token.startsWith("=")) {
+      // Skip variable assignments (VAR=value) only at command position
+      // e.g., "PORT=4242 bun run dev" - PORT=4242 is an assignment, bun is the command
+      // But don't skip if we're collecting arguments (e.g., pkill -f 'PORT=4242')
+      if (expectCommand && token.includes("=") && !token.startsWith("=")) {
         continue;
       }
 
@@ -373,10 +400,19 @@ export interface ValidationResult {
   reason?: string;
 }
 
+export interface ValidationContext {
+  port?: number;
+}
+
 /**
  * Validate a bash command against the allowlist.
+ * @param command The bash command to validate
+ * @param context Optional context with session-specific info (e.g., port)
  */
-export function validateBashCommand(command: string): ValidationResult {
+export function validateBashCommand(
+  command: string,
+  context?: ValidationContext
+): ValidationResult {
   if (!command?.trim()) {
     return { allowed: false, reason: "Empty command" };
   }
@@ -406,7 +442,7 @@ export function validateBashCommand(command: string): ValidationResult {
 
     // Additional validation for sensitive commands
     if (SENSITIVE_COMMANDS[cmd]) {
-      const result = SENSITIVE_COMMANDS[cmd](args, command);
+      const result = SENSITIVE_COMMANDS[cmd](args, command, context);
       if (!result.allowed) {
         return { allowed: false, reason: result.reason };
       }
