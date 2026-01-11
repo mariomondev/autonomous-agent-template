@@ -162,10 +162,12 @@ interface SessionStats {
 }
 
 /**
- * Format token count with comma separators.
+ * Format a compact stats line for session summary.
+ * Shows: duration | cost
  */
-function formatTokens(tokens: number): string {
-  return tokens.toLocaleString();
+function formatSessionStats(stats: SessionStats, duration: number): string {
+  const durationStr = formatDuration(duration);
+  return `${durationStr} | $${stats.costUsd.toFixed(2)}`;
 }
 
 export async function runAutonomousAgent({
@@ -263,26 +265,20 @@ export async function runAutonomousAgent({
 
     const sessionStart = new Date();
 
-    console.log(`\n${"=".repeat(60)}`);
-    console.log(`SESSION ${iteration}`);
-    console.log(`${"=".repeat(60)}`);
-    console.log(`Started: ${formatTimestamp(sessionStart)}`);
-    printProgressSummary(absoluteProjectDir);
-    console.log();
-
     // Generate current_batch.json for this session
     const batchFeatures = getNextFeatures(absoluteProjectDir, 10);
     const batchPath = path.join(autonomousDir, "current_batch.json");
     fs.writeFileSync(batchPath, JSON.stringify(batchFeatures, null, 2));
-    console.log(
-      `Generated batch: ${batchFeatures.length} features ready for this session`
-    );
 
-    // Mark the first feature as in_progress (orchestrator handles this for reliable tracking)
+    // Mark the first feature as in_progress
     if (batchFeatures.length > 0 && batchFeatures[0].id !== undefined) {
       setFeatureStatus(absoluteProjectDir, batchFeatures[0].id, "in_progress");
-      console.log(`Marked feature ${batchFeatures[0].id} as in_progress`);
     }
+
+    // Compact session header
+    const progressStats = getProgressStats(absoluteProjectDir);
+    const firstFeature = batchFeatures[0];
+    console.log(`\n[Starting Session ${iteration}] ${progressStats.completed}/${progressStats.total} done | Batch: ${batchFeatures.length} features | Next: "${firstFeature?.name}"`);
 
     // Build feature lookup for live updates
     const featureLookup: FeatureLookup = {};
@@ -308,10 +304,7 @@ export async function runAutonomousAgent({
     // Capture pre-session completed count for verification
     const preSessionCompleted = kanbanStats.completed;
 
-    console.log();
-
     // Ensure dev server is running before starting session
-    console.log("[Pre-session] Checking dev server...");
     const serverReady = await ensureDevServer({
       projectDir: absoluteProjectDir,
       port,
@@ -338,6 +331,9 @@ export async function runAutonomousAgent({
 
     let sessionStats: SessionStats | null = null;
 
+    // Log file for verbose agent output
+    const logPath = path.join(autonomousDir, "session.log");
+
     try {
       // Run a single agent session
       sessionStats = await runAgentSession(
@@ -345,7 +341,8 @@ export async function runAutonomousAgent({
         model,
         enrichedPrompt,
         agentEnv,
-        featureLookup
+        featureLookup,
+        logPath
       );
 
       // Verify actual completions from database (source of truth)
@@ -354,12 +351,9 @@ export async function runAutonomousAgent({
         postSessionStats.completed - preSessionCompleted;
       const observedCompleted = sessionStats?.featuresCompleted ?? 0;
 
-      // Log discrepancy if observed doesn't match verified
-      if (observedCompleted !== verifiedCompleted) {
-        console.log(
-          `\n[Verification] Observed ${observedCompleted} completions from tool calls, ` +
-            `but database shows ${verifiedCompleted}. Using verified count.`
-        );
+      // Log discrepancy only if it matters (we observed some but DB differs)
+      if (observedCompleted > 0 && observedCompleted !== verifiedCompleted) {
+        console.log(`[Note] Tool tracking: ${observedCompleted}, DB verified: ${verifiedCompleted}`);
       }
 
       // Accumulate stats (use verified count from database)
@@ -383,29 +377,10 @@ export async function runAutonomousAgent({
         cost_usd: sessionStats?.costUsd,
       });
     } catch (error) {
-      console.error(`\nSession ${iteration} encountered an error:`);
-
-      // Log detailed error information
-      if (error instanceof Error) {
-        console.error(`  Message: ${error.message}`);
-        if (error.stack) {
-          console.error(`  Stack trace:\n${error.stack}`);
-        }
-        // Log any additional properties on the error object
-        const errorObj = error as unknown as Record<string, unknown>;
-        for (const key of Object.keys(errorObj)) {
-          if (key !== "message" && key !== "stack" && key !== "name") {
-            console.error(
-              `  ${key}: ${JSON.stringify(errorObj[key], null, 2)}`
-            );
-          }
-        }
-      } else {
-        console.error(`  Error: ${JSON.stringify(error, null, 2)}`);
-      }
-
-      console.log("\nRetrying after delay...");
-      await sleep(5000); // Wait 5 seconds before retry
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error(`\n[Session ${iteration} Error] ${errMsg}`);
+      console.log("Retrying in 5s...");
+      await sleep(5000);
 
       // End session with error
       endSession(absoluteProjectDir, sessionId, {
@@ -417,26 +392,12 @@ export async function runAutonomousAgent({
     const sessionEnd = new Date();
     const duration = sessionEnd.getTime() - sessionStart.getTime();
 
-    console.log(`\n${"-".repeat(60)}`);
-    console.log(`Finished: ${formatTimestamp(sessionEnd)}`);
-    console.log(`Duration: ${formatDuration(duration)}`);
+    // Compact session summary
     if (sessionStats) {
-      const totalTokens = sessionStats.inputTokens + sessionStats.outputTokens;
-      console.log(
-        `Tokens: ${formatTokens(sessionStats.inputTokens)} in / ${formatTokens(
-          sessionStats.outputTokens
-        )} out (${formatTokens(totalTokens)} total)`
-      );
-      if (sessionStats.cacheReadTokens > 0) {
-        console.log(
-          `Cache: ${formatTokens(
-            sessionStats.cacheReadTokens
-          )} read / ${formatTokens(sessionStats.cacheWriteTokens)} write`
-        );
-      }
-      console.log(`Cost: $${sessionStats.costUsd.toFixed(2)}`);
+      console.log(`\n[Session ${iteration}] ${formatSessionStats(sessionStats, duration)}`);
+    } else {
+      console.log(`\n[Session ${iteration}] ${formatDuration(duration)} | failed`);
     }
-    console.log(`${"-".repeat(60)}`);
 
     // Check if we should continue
     if (
@@ -451,43 +412,19 @@ export async function runAutonomousAgent({
   // Final summary
   const totalEnd = new Date();
   const totalDuration = totalEnd.getTime() - totalStart.getTime();
-  const grandTotalTokens = totalStats.inputTokens + totalStats.outputTokens;
+  const finalStats = getProgressStats(absoluteProjectDir);
 
-  console.log(`\n${"=".repeat(60)}`);
-  console.log("COMPLETE");
-  console.log(`${"=".repeat(60)}`);
-  console.log(`Total runtime: ${formatDuration(totalDuration)}`);
-  console.log(`Sessions: ${iteration}`);
-  console.log(
-    `Total tokens: ${formatTokens(totalStats.inputTokens)} in / ${formatTokens(
-      totalStats.outputTokens
-    )} out (${formatTokens(grandTotalTokens)} total)`
-  );
-  if (totalStats.cacheReadTokens > 0) {
-    console.log(
-      `Total cache: ${formatTokens(
-        totalStats.cacheReadTokens
-      )} read / ${formatTokens(totalStats.cacheWriteTokens)} write`
-    );
-  }
-  console.log(`Total cost: $${totalStats.costUsd.toFixed(2)}`);
-  printProgressSummary(absoluteProjectDir);
+  console.log(`\n${"=".repeat(50)}`);
+  console.log(`DONE | ${formatDuration(totalDuration)} | ${iteration} session${iteration > 1 ? "s" : ""} | $${totalStats.costUsd.toFixed(2)}`);
+  console.log(`${"=".repeat(50)}`);
+  console.log(`Features: ${finalStats.completed}/${finalStats.total} completed`);
+  console.log(`Log: ${path.join(autonomousDir, "session.log")}`);
 
   if (!hasIncompleteFeatures(absoluteProjectDir)) {
-    console.log("\nAll features passing! Project complete.");
+    console.log(`\nRun: cd ${absoluteProjectDir} && PORT=${port} bun run dev`);
   } else {
-    console.log(`\nStopped after ${iteration} sessions.`);
-    console.log("Run again to continue from where you left off.");
+    console.log(`\nIncomplete - run again to continue.`);
   }
-
-  // Print instructions for running the generated application
-  console.log(`\n${"-".repeat(60)}`);
-  console.log("TO RUN THE GENERATED APPLICATION:");
-  console.log(`${"-".repeat(60)}`);
-  console.log(`\n  cd ${absoluteProjectDir}`);
-  console.log(`  PORT=${port} bun run dev`);
-  console.log(`\n  Then open http://localhost:${port}`);
-  console.log(`${"-".repeat(60)}`);
 }
 
 async function runAgentSession(
@@ -495,7 +432,8 @@ async function runAgentSession(
   model: string,
   prompt: string,
   env: Record<string, string>,
-  featureLookup: FeatureLookup = {}
+  featureLookup: FeatureLookup = {},
+  logPath: string
 ): Promise<SessionStats> {
   const options = getClientOptions(projectDir, model, env);
 
@@ -516,7 +454,11 @@ async function runAgentSession(
 
   // Track completed features for live updates
   let completedCount = 0;
-  const totalInBatch = Object.keys(featureLookup).length;
+
+  // Open log file for verbose output
+  const logStream = fs.createWriteStream(logPath, { flags: "a" });
+  const log = (text: string) => logStream.write(text);
+  log(`\n${"=".repeat(60)}\nSession started: ${new Date().toISOString()}\n${"=".repeat(60)}\n\n`);
 
   // Stream and display the response
   // Using 'any' to handle SDK type variations
@@ -525,70 +467,59 @@ async function runAgentSession(
 
     switch (msg.type) {
       case "assistant":
-        // Handle both string and array content
-        if (typeof msg.content === "string") {
-          process.stdout.write(msg.content);
-        } else if (Array.isArray(msg.content)) {
-          for (const block of msg.content) {
-            if (block.type === "text") {
-              process.stdout.write(block.text);
+        // Parse message content - can contain text and tool_use blocks
+        const message = msg.message;
+        if (message && Array.isArray(message.content)) {
+          for (const block of message.content) {
+            if (block.type === "text" && block.text) {
+              // Write to log file instead of console
+              log(block.text);
+            } else if (block.type === "tool_use") {
+              // Log tool calls to file
+              log(`\n[Tool: ${block.name}]\n`);
+
+              // Handle tool calls - check for feature_status updates
+              const toolName = block.name;
+              const toolInput = block.input;
+
+              if (toolName?.endsWith("feature_status") && toolInput) {
+                const featureId = toolInput.feature_id;
+                const status = toolInput.status;
+                const feature = featureLookup[featureId];
+
+                if (feature && status) {
+                  const statusIcon =
+                    status === "completed" ? "✓" :
+                    status === "in_progress" ? "→" :
+                    status === "pending" ? "↻" : "✗";
+                  // Print to console - this is important status info
+                  console.log(`  [${statusIcon}] Feature ${featureId}: "${feature.name}" → ${status}`);
+                  log(`[${statusIcon}] Feature ${featureId}: "${feature.name}" → ${status}\n`);
+
+                  if (status === "completed") {
+                    completedCount++;
+                    stats.featuresCompleted = completedCount;
+                  }
+                }
+              }
             }
           }
         }
         break;
 
-      case "tool_call":
-        // Check for feature_status MCP tool for live updates
-        // Tool name is prefixed: mcp__features-db__feature_status
-        if (msg.tool_name?.endsWith("feature_status") && msg.tool_input) {
-          const input = msg.tool_input;
-          const featureId = input.feature_id;
-          const status = input.status;
-          const feature = featureLookup[featureId];
-
-          if (feature && status) {
-            const statusIcon =
-              status === "completed"
-                ? "✓"
-                : status === "in_progress"
-                ? "→"
-                : status === "pending"
-                ? "↻"
-                : "✗";
-            console.log(
-              `\n[${statusIcon}] Feature ${featureId}: "${feature.name}" → ${status}`
-            );
-
-            if (status === "completed") {
-              completedCount++;
-              stats.featuresCompleted = completedCount;
-              console.log(
-                `    Progress: ${completedCount}/${totalInBatch} features completed this session`
-              );
-            }
-          } else {
-            console.log(`\n[Tool: ${msg.tool_name}]`);
-          }
-        } else {
-          console.log(`\n[Tool: ${msg.tool_name}]`);
-        }
-        break;
-
-      case "tool_result":
-        if (msg.error) {
-          console.log(`[Error: ${msg.error}]`);
-        } else {
-          console.log("[Done]");
-        }
+      case "user":
+        // Tool results come back as user messages - log to file
+        log("\n[Tool Result]\n");
         break;
 
       case "error":
-        console.error(`\n[Agent Error: ${msg.error}]`);
+        console.error(`  [Error] ${msg.error}`);
+        log(`\n[Error] ${msg.error}\n`);
         break;
 
       case "system":
         if (msg.subtype === "init") {
-          console.log(`[Session started: ${msg.session_id}]`);
+          log(`[Session ID: ${msg.session_id}]\n`);
         }
         break;
 
@@ -601,10 +532,12 @@ async function runAgentSession(
           stats.cacheWriteTokens = msg.usage.cache_creation_input_tokens ?? 0;
         }
         stats.costUsd = msg.total_cost_usd ?? 0;
+        log(`\n[Result] Cost: $${stats.costUsd.toFixed(2)}\n`);
         break;
     }
   }
 
+  logStream.end();
   return stats;
 }
 

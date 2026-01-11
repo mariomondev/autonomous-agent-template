@@ -8,7 +8,9 @@
     "start": "bun run src/index.ts",
     "build": "tsc",
     "dev": "bun run --watch src/index.ts",
-    "test": "bun run tests/security.test.ts"
+    "test": "bun run tests/security.test.ts",
+    "start:temp": "bun run src/index.ts ./temp",
+    "reset:temp": "rm -f temp/.autonomous/db.sqlite && sqlite3 temp/.autonomous/db.sqlite < temp/.autonomous/features.sql && rm -rf temp/.autonomous/playwright-mcp temp/.autonomous/*.log temp/.autonomous/current_batch.json && echo 'Reset complete. Features:' && sqlite3 temp/.autonomous/db.sqlite 'SELECT id, name, status FROM features'"
   },
   "keywords": [
     "claude",

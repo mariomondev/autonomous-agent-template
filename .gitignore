@@ -98,6 +98,7 @@ $RECYCLE.BIN/
 .cache/
 .temp/
 .tmp/
+temp/
 
 # Test project
 test-project

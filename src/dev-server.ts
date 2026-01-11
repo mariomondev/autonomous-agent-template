@@ -129,7 +129,7 @@ export async function startDevServer(
     `--- Dev server started at ${new Date().toISOString()} ---\n`
   );
 
-  console.log(`[Dev Server] Starting: ${command} (port ${port})`);
+  // Silent start - logs go to dev-server.log
 
   // Spawn the dev server
   const [cmd, ...args] = command.split(" ");
@@ -234,33 +234,22 @@ export async function ensureDevServer(
   // Check if already running
   const status = await checkDevServer(port);
   if (status.running) {
-    console.log(
-      `[Dev Server] Already running on port ${port} (PID: ${status.pid})`
-    );
     return true;
   }
 
   // Start the server
   const result = await startDevServer(options);
   if (!result) {
+    console.error(`[Dev Server] Failed to start. Check .autonomous/dev-server.log`);
     return false;
   }
-
-  console.log(
-    `[Dev Server] Started with PID ${result.pid}, waiting for ready...`
-  );
 
   // Wait for it to be ready
   const ready = await waitForServer(port, timeout);
-  if (ready) {
-    console.log(`[Dev Server] Ready on http://localhost:${port}`);
-    return true;
-  } else {
-    console.error(
-      `[Dev Server] Timed out waiting for server. Check ${result.logFile}`
-    );
-    return false;
+  if (!ready) {
+    console.error(`[Dev Server] Timed out. Check .autonomous/dev-server.log`);
   }
+  return ready;
 }
 
 function sleep(ms: number): Promise<void> {
