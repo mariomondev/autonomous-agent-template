@@ -1,7 +1,6 @@
 # Feature List Generator
 
 Use this prompt with any LLM to generate `features.sql` from your `app_spec.txt`.
-The SQL file can be imported into the database using: `sqlite3 .autonomous/db.sqlite < features.sql`
 
 ---
 
@@ -15,30 +14,36 @@ Generate a `features.sql` file from the provided `app_spec.txt`. Each feature sh
 
 ### Output Format:
 
-Generate SQL INSERT statements that can be imported into SQLite. The output should be a SQL file with the following structure:
+Generate SQL statements that create the schema and insert features. The output should be a SQL file with the following structure:
 
 ```sql
--- Create table if it doesn't exist (for reference, agent will create this automatically)
--- CREATE TABLE IF NOT EXISTS features (
---   id INTEGER PRIMARY KEY,
---   name TEXT NOT NULL,
---   description TEXT NOT NULL,
---   category TEXT NOT NULL DEFAULT 'uncategorized',
---   testing_steps TEXT NOT NULL,
---   passes INTEGER NOT NULL DEFAULT 0,
---   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
---   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
--- );
+-- Schema (required - creates table if not exists)
+CREATE TABLE IF NOT EXISTS features (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'uncategorized',
+  testing_steps TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 
-INSERT INTO features (id, name, description, category, testing_steps, passes) VALUES
-(1, 'Short feature name (action-oriented)', 'What this feature does and why it matters', 'category-slug', '["Step 1: Navigate to specific URL", "Step 2: Perform action (click, fill, etc.)", "Step 3: Verify expected result"]', 0),
-(2, 'Another feature name', 'Description', 'category-slug', '["Step 1", "Step 2"]', 0);
+CREATE INDEX IF NOT EXISTS idx_features_category ON features(category);
+CREATE INDEX IF NOT EXISTS idx_features_status ON features(status);
+
+-- Features
+INSERT INTO features (id, name, description, category, testing_steps, status, retry_count) VALUES
+(1, 'Short feature name (action-oriented)', 'What this feature does and why it matters', 'category-slug', '["Step 1: Navigate to specific URL", "Step 2: Perform action (click, fill, etc.)", "Step 3: Verify expected result"]', 'pending', 0),
+(2, 'Another feature name', 'Description', 'category-slug', '["Step 1", "Step 2"]', 'pending', 0);
 ```
 
 **Important Notes:**
 
 - `testing_steps` must be a JSON array stored as a TEXT string (use single quotes around the JSON)
-- `passes` should always be `0` (false) for new features
+- `status` should always be `'pending'` for new features (valid values: pending, in_progress, completed, failed)
+- `retry_count` should always be `0` for new features
 - `id` should be sequential starting from 1
 - Escape single quotes in text by doubling them: `''`
 
@@ -73,15 +78,15 @@ Assign each feature to exactly ONE category using lowercase slugs:
 
 ### 2. Testing Steps Must Be Automatable
 
-Each step should map to a browser automation action (agent tests on port 4242):
+Each step should describe a browser action that can be automated:
 
-- `Navigate to http://localhost:4242/path` → browser_navigate
-- `Click [element]` → browser_click
-- `Fill [field] with [value]` → browser_fill
-- `Verify [element] is visible` → browser_screenshot + evaluate
-- `Verify text [text] appears` → browser_evaluate
-- `Select [option] from [dropdown]` → browser_select
-- `Hover over [element]` → browser_hover
+- `Navigate to /path` - Go to a URL
+- `Click [element]` - Click a button, link, or element
+- `Fill [field] with [value]` - Type into an input field
+- `Verify [element] is visible` - Check something appears on screen
+- `Verify text "[text]" appears` - Check for specific text
+- `Select [option] from [dropdown]` - Choose from a dropdown
+- `Hover over [element]` - Hover to reveal menus/tooltips
 
 ### 3. Step Granularity
 
@@ -131,13 +136,13 @@ For each major feature area, include:
 **To features.sql:**
 
 ```sql
-INSERT INTO features (id, name, description, category, testing_steps, passes) VALUES
-(1, 'User can register with valid credentials', 'New users can create account with email and password meeting requirements', 'auth', '["Navigate to /register", "Fill email field with newuser@test.com", "Fill password field with SecurePass123!", "Fill confirm password field with SecurePass123!", "Click Register button", "Verify redirect to /dashboard or /login", "Verify success message appears"]', 0),
-(2, 'Registration validates email format', 'Registration form rejects invalid email addresses', 'auth', '["Navigate to /register", "Fill email field with invalid-email", "Fill password field with SecurePass123!", "Click Register button", "Verify error message about invalid email appears", "Verify form is not submitted"]', 0),
-(3, 'Registration enforces password requirements', 'Password must meet minimum security requirements', 'auth', '["Navigate to /register", "Fill email field with test@example.com", "Fill password field with weak", "Verify password requirements hint appears", "Verify submit button is disabled or shows error on click"]', 0),
-(4, 'User can login with valid credentials', 'Existing users can authenticate and access protected routes', 'auth', '["Navigate to /login", "Fill email field with existing@user.com", "Fill password field with correctpassword", "Click Login button", "Verify redirect to /dashboard", "Verify user name or email displayed in header"]', 0),
-(5, 'Login shows error for wrong password', 'Users see helpful error when credentials are incorrect', 'auth', '["Navigate to /login", "Fill email field with existing@user.com", "Fill password field with wrongpassword", "Click Login button", "Verify error message appears", "Verify user stays on login page"]', 0),
-(6, 'User can logout', 'Authenticated users can sign out and lose access to protected routes', 'auth', '["Login as existing user", "Click logout button in header", "Verify redirect to /login or home page", "Navigate to /dashboard", "Verify redirect back to login (protected route)"]', 0);
+INSERT INTO features (id, name, description, category, testing_steps, status, retry_count) VALUES
+(1, 'User can register with valid credentials', 'New users can create account with email and password meeting requirements', 'auth', '["Navigate to /register", "Fill email field with newuser@test.com", "Fill password field with SecurePass123!", "Fill confirm password field with SecurePass123!", "Click Register button", "Verify redirect to /dashboard or /login", "Verify success message appears"]', 'pending', 0),
+(2, 'Registration validates email format', 'Registration form rejects invalid email addresses', 'auth', '["Navigate to /register", "Fill email field with invalid-email", "Fill password field with SecurePass123!", "Click Register button", "Verify error message about invalid email appears", "Verify form is not submitted"]', 'pending', 0),
+(3, 'Registration enforces password requirements', 'Password must meet minimum security requirements', 'auth', '["Navigate to /register", "Fill email field with test@example.com", "Fill password field with weak", "Verify password requirements hint appears", "Verify submit button is disabled or shows error on click"]', 'pending', 0),
+(4, 'User can login with valid credentials', 'Existing users can authenticate and access protected routes', 'auth', '["Navigate to /login", "Fill email field with existing@user.com", "Fill password field with correctpassword", "Click Login button", "Verify redirect to /dashboard", "Verify user name or email displayed in header"]', 'pending', 0),
+(5, 'Login shows error for wrong password', 'Users see helpful error when credentials are incorrect', 'auth', '["Navigate to /login", "Fill email field with existing@user.com", "Fill password field with wrongpassword", "Click Login button", "Verify error message appears", "Verify user stays on login page"]', 'pending', 0),
+(6, 'User can logout', 'Authenticated users can sign out and lose access to protected routes', 'auth', '["Login as existing user", "Click logout button in header", "Verify redirect to /login or home page", "Navigate to /dashboard", "Verify redirect back to login (protected route)"]', 'pending', 0);
 ```
 
 ---
@@ -164,20 +169,7 @@ Before finalizing, verify:
 - [ ] Testing steps use concrete values (not "valid email" but "test@example.com")
 - [ ] Error scenarios are covered for user-facing forms
 - [ ] Empty states are tested (no data, first-time user)
-- [ ] All `passes` fields are set to `false`
+- [ ] All `status` fields are set to `'pending'`
+- [ ] All `retry_count` fields are set to `0`
 - [ ] Feature names are unique (no duplicates)
 - [ ] Features are grouped by category for efficient batching
-
----
-
-## After Generating features.sql
-
-1. Review the generated SQL file
-2. Adjust order if needed (dependencies first - lower IDs should be implemented first)
-3. Remove any features outside current scope (delete INSERT statements)
-4. Add project-specific features the LLM might have missed
-5. Save as `.autonomous/features.sql` in your project
-6. Initialize the database: `sqlite3 .autonomous/db.sqlite < .autonomous/features.sql`
-7. Run: `bun run start ./your-project`
-
-**Note:** The agent will test on http://localhost:4242

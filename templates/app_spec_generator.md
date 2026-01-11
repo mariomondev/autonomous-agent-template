@@ -136,13 +136,3 @@ Existing Code: None (starting fresh)
 ```
 
 **LLM generates:** A complete app_spec.txt with ~30-50 specific, testable features covering authentication, project CRUD, task management, kanban functionality, etc.
-
----
-
-## After Generating app_spec.txt
-
-1. Review the generated spec and adjust as needed
-2. Create `.autonomous/` directory in your project
-3. Save as `.autonomous/app_spec.txt`
-4. Use the spec to generate `features.sql` (next step)
-5. Run the autonomous agent

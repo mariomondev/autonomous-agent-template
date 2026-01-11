@@ -39,47 +39,28 @@ bun run start ./your-project [options]
 
 ## Setup Your Project
 
-Create `.autonomous/` in your project:
-
 ```
 your-project/
 ├── .autonomous/
-│   ├── app_spec.txt       # What to build
-│   └── features.sql       # Feature definitions
+│   ├── app_spec.txt       # What to build (Step 1)
+│   └── features.sql       # Feature list (Step 2)
 ├── CLAUDE.md              # Project patterns (optional)
 └── ... your code
 ```
 
-### 1. Create `app_spec.txt`
+### Step 1: Generate `app_spec.txt`
 
-Describe what to build. Use `templates/app_spec_generator.md` with Claude, or write manually.
+Use `templates/app_spec_generator.md` with any LLM. Save output to `.autonomous/app_spec.txt`
 
-### 2. Create Feature Database
+### Step 2: Generate `features.sql`
+
+Use `templates/feature_list_generator.md` with any LLM. Save output to `.autonomous/features.sql`
+
+### Step 3: Initialize & Run
 
 ```bash
-# Generate features.sql using templates/feature_list_generator.md
-# Then initialize:
-sqlite3 .autonomous/db.sqlite < .autonomous/features.sql
-```
-
-**Feature format:**
-```sql
-INSERT INTO features (id, name, description, category, testing_steps, status) VALUES
-(1, 'User login', 'Users can authenticate', 'auth', '["Navigate to /login", "Fill form", "Click Login"]', 'pending');
-```
-
-### 3. Optional: Add `CLAUDE.md`
-
-```markdown
-# CLAUDE.md
-
-## Stack
-- Next.js 14 with App Router
-- Tailwind CSS + shadcn/ui
-
-## Patterns
-- Server Actions in src/actions/
-- Components in src/components/
+bun run init ./your-project   # Creates db.sqlite from features.sql
+bun run start ./your-project  # Start the agent
 ```
 
 ---
@@ -108,10 +89,11 @@ Three layers:
 
 | Issue | Solution |
 |-------|----------|
-| No database | `sqlite3 .autonomous/db.sqlite < .autonomous/features.sql` |
+| No database | `bun run init ./your-project` |
 | Auth error | Run `claude` to re-authenticate |
-| Port 4242 in use | `lsof -ti:4242 \| xargs kill` |
+| Port in use | `lsof -ti:4242 \| xargs kill` (or use `--port=<other>`) |
 | Check status | `sqlite3 .autonomous/db.sqlite "SELECT status, COUNT(*) FROM features GROUP BY status"` |
+| Reset failed | `sqlite3 .autonomous/db.sqlite "UPDATE features SET status='pending', retry_count=0 WHERE status='failed'"` |
 
 ---
 
