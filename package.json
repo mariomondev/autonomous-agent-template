@@ -9,7 +9,10 @@
     "init": "bun run src/init.ts",
     "build": "tsc",
     "dev": "bun run --watch src/index.ts",
-    "test": "bun run tests/security.test.ts",
+    "test": "bun run tests/security.test.ts && bun run tests/dev-server.test.ts",
+    "test:security": "bun run tests/security.test.ts",
+    "test:dev-server": "bun run tests/dev-server.test.ts",
+    "test:playwright-mcp": "bun run tests/playwright-mcp.test.ts",
     "start:temp": "bun run src/index.ts ./temp",
     "reset:temp": "rm -rf temp/index.html temp/package.json temp/.autonomous && cp -r temp-skeleton/. temp/ && sqlite3 temp/.autonomous/db.sqlite < temp/.autonomous/features.sql && echo 'Reset complete. Features:' && sqlite3 temp/.autonomous/db.sqlite 'SELECT id, name, status FROM features'"
   },

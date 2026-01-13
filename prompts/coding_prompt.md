@@ -24,16 +24,27 @@ Then explore the existing codebase:
 
 **This project uses an existing template with established patterns.** Match the coding style, component patterns, and conventions already in the codebase.
 
-### STEP 2: VERIFY DEV SERVER IS RUNNING
+### STEP 2: SERVER CONTROL (CRITICAL!)
 
-**The orchestrator has already started the dev server on port {{PORT}}.**
+**You control the dev server.** The server should only run when you're verifying UI, not while editing files.
 
-Verify it's responding by navigating to `http://localhost:{{PORT}}` with Playwright and taking a screenshot.
+**Server Control Tools:**
+| Tool | When to Use |
+|------|-------------|
+| `start_server` | BEFORE using Playwright to verify UI |
+| `stop_server` | BEFORE editing any code files |
+| `server_status` | To check if server is currently running |
 
-**If the server is not responding:**
+**Why this matters:** Hot-reload can crash the server when you edit files mid-development. Stop the server before editing, restart it when you need to verify.
+
+**Workflow:**
+1. `stop_server` → edit files → edit more files → ...
+2. `start_server` → verify in browser with Playwright
+3. See issues? → `stop_server` → fix code → `start_server` → verify again
+
+**If the server fails to start:**
 - Check the log file: `.autonomous/dev-server.log`
-- The orchestrator may need to restart - add a `global_note` describing the issue
-- Do NOT try to start the server yourself - the orchestrator manages it
+- Add a `global_note` describing the issue
 
 ### STEP 3: VERIFICATION TEST (CRITICAL!)
 
@@ -60,17 +71,22 @@ When moving to subsequent features, use the `feature_status` MCP tool:
 
 ### STEP 5: IMPLEMENT THE FEATURE
 
+**IMPORTANT:** Call `stop_server` before editing files to prevent hot-reload crashes.
+
 Implement the chosen feature thoroughly:
 
-1. Write the code (frontend and/or backend as needed)
-2. Test using browser automation (see Step 6)
-3. Fix any issues discovered
-4. Verify the feature works end-to-end
+1. Stop the server (`stop_server`)
+2. Write the code (frontend and/or backend as needed)
+3. Start the server (`start_server`) and test using browser automation (see Step 6)
+4. If issues found: stop server → fix code → start server → verify again
+5. Verify the feature works end-to-end
 
 ### STEP 6: VERIFY WITH BROWSER AUTOMATION
 
 **CRITICAL:** You MUST verify features through the actual UI using Playwright tools.
 **The app runs on http://localhost:{{PORT}}**
+
+**IMPORTANT:** Call `start_server` before using any Playwright tools. The server must be running to verify UI.
 
 **Available Playwright Tools:**
 
@@ -115,6 +131,9 @@ You have access to MCP tools for managing feature status and notes. **Do NOT wri
 
 | Tool | Purpose |
 |------|---------|
+| `start_server` | Start dev server before UI verification |
+| `stop_server` | Stop dev server before editing files |
+| `server_status` | Check if dev server is running |
 | `feature_status` | Update feature status (in_progress, completed, pending) |
 | `feature_note` | Add a note to a specific feature |
 | `category_note` | Add a note for all features in a category |

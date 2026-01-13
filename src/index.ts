@@ -21,6 +21,8 @@
 
 import { runAutonomousAgent } from "./agent.js";
 import { execSync } from "child_process";
+import { cleanupNextLockFile, cleanupNextCache } from "./dev-server.js";
+import path from "path";
 
 /**
  * Kill any process running on the specified port.
@@ -153,8 +155,14 @@ if (force) {
 }
 console.log();
 
+// Resolve project directory for cleanup
+const absoluteProjectDir = path.resolve(projectDir);
+
 // Clean up port on startup (in case of previous orphaned server)
 killPort(port);
+
+// Clean up any stale lock files on startup (handles crashed sessions)
+cleanupNextLockFile(absoluteProjectDir);
 
 // Register cleanup handlers
 let cleanupDone = false;
@@ -163,6 +171,7 @@ function cleanup(): void {
   cleanupDone = true;
   console.log("\nCleaning up...");
   killPort(port);
+  cleanupNextLockFile(absoluteProjectDir);
 }
 
 // Handle keyboard interrupt gracefully

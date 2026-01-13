@@ -9,8 +9,49 @@ import { spawn, exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs";
 import path from "path";
+import { rmSync } from "fs";
 
 const execAsync = promisify(exec);
+
+/**
+ * Clean up Next.js lock file if it exists.
+ * This handles cases where a previous session crashed without cleanup.
+ */
+export function cleanupNextLockFile(projectDir: string): boolean {
+  const lockPath = path.join(projectDir, ".next", "dev", "lock");
+
+  try {
+    if (fs.existsSync(lockPath)) {
+      rmSync(lockPath, { force: true });
+      console.log(`[Dev Server] Removed stale lock file: ${lockPath}`);
+      return true;
+    }
+  } catch (err) {
+    console.warn(`[Dev Server] Could not remove lock file: ${err}`);
+  }
+
+  return false;
+}
+
+/**
+ * Clean up the entire .next cache directory.
+ * This handles Turbopack panics and other cache corruption issues.
+ */
+export function cleanupNextCache(projectDir: string): boolean {
+  const nextPath = path.join(projectDir, ".next");
+
+  try {
+    if (fs.existsSync(nextPath)) {
+      rmSync(nextPath, { recursive: true, force: true });
+      console.log(`[Dev Server] Removed corrupted .next cache: ${nextPath}`);
+      return true;
+    }
+  } catch (err) {
+    console.warn(`[Dev Server] Could not remove .next cache: ${err}`);
+  }
+
+  return false;
+}
 
 export interface DevServerStatus {
   running: boolean;
@@ -203,6 +244,7 @@ export async function waitForServer(
 
 /**
  * Stop the dev server running on the specified port.
+ * Uses SIGTERM first, then SIGKILL if the process doesn't respond.
  */
 export async function stopDevServer(port: number): Promise<boolean> {
   try {
@@ -213,7 +255,7 @@ export async function stopDevServer(port: number): Promise<boolean> {
       return true; // Already stopped
     }
 
-    // Kill all processes on the port
+    // First try graceful SIGTERM
     for (const pid of pids) {
       try {
         await execAsync(`kill ${pid}`);
@@ -222,9 +264,41 @@ export async function stopDevServer(port: number): Promise<boolean> {
       }
     }
 
-    // Wait a moment and verify
+    // Wait for graceful shutdown
+    await sleep(2000);
+
+    // Check if still running
+    let status = await checkDevServer(port);
+    if (!status.running) {
+      return true;
+    }
+
+    // Process didn't respond to SIGTERM, use SIGKILL
+    console.log(
+      `[Dev Server] Process didn't respond to SIGTERM, using SIGKILL...`
+    );
+
+    // Re-fetch PIDs in case they changed
+    try {
+      const { stdout: newPids } = await execAsync(`lsof -ti :${port}`);
+      const currentPids = newPids.trim().split("\n").filter(Boolean);
+
+      for (const pid of currentPids) {
+        try {
+          await execAsync(`kill -9 ${pid}`);
+        } catch {
+          // Process may have already exited
+        }
+      }
+    } catch {
+      // No process found
+    }
+
+    // Wait for force kill
     await sleep(1000);
-    const status = await checkDevServer(port);
+
+    // Final verification
+    status = await checkDevServer(port);
     return !status.running;
   } catch {
     return true; // No process found
@@ -233,16 +307,24 @@ export async function stopDevServer(port: number): Promise<boolean> {
 
 /**
  * Check if a server is responding to HTTP requests.
+ * Returns: "healthy" (2xx/3xx), "unhealthy" (4xx/5xx), or "down" (not responding)
  */
-async function isServerResponding(port: number): Promise<boolean> {
+async function getServerHealth(
+  port: number
+): Promise<"healthy" | "unhealthy" | "down"> {
   try {
     const response = await fetch(`http://localhost:${port}`, {
-      method: "HEAD",
-      signal: AbortSignal.timeout(3000),
+      method: "GET",
+      signal: AbortSignal.timeout(5000),
     });
-    return response.status > 0;
+    // 2xx and 3xx are healthy, 4xx might be ok (404 on root is fine)
+    // 5xx indicates server errors (like Turbopack panic)
+    if (response.status >= 500) {
+      return "unhealthy";
+    }
+    return "healthy";
   } catch {
-    return false;
+    return "down";
   }
 }
 
@@ -251,38 +333,54 @@ async function isServerResponding(port: number): Promise<boolean> {
  * Returns true if server is ready, false if failed.
  *
  * If a process is on the port but not responding to HTTP, it will be killed
- * and a new server started.
+ * and a new server started. If the server is returning 500 errors (e.g.,
+ * Turbopack panic), the .next cache will be cleared and server restarted.
  */
 export async function ensureDevServer(
   options: DevServerOptions
 ): Promise<boolean> {
-  const { port, timeout = 30000 } = options;
+  const { projectDir, port, timeout = 30000 } = options;
+
+  // Clean up any stale lock files from crashed sessions
+  cleanupNextLockFile(projectDir);
 
   // Check if something is already running on the port
   const status = await checkDevServer(port);
 
   if (status.running) {
-    // Verify it's actually responding to HTTP requests
-    const responding = await isServerResponding(port);
+    // Check server health (not just responding, but healthy)
+    const health = await getServerHealth(port);
 
-    if (responding) {
-      // Server is up and responding - we're good
+    if (health === "healthy") {
+      // Server is up and healthy - we're good
       return true;
     }
 
-    // Process exists but not responding - kill it and restart
-    console.log(
-      `[Dev Server] Port ${port} occupied but not responding. Killing PID ${status.pid}...`
-    );
-    const stopped = await stopDevServer(port);
-    if (!stopped) {
-      console.error(
-        `[Dev Server] Failed to stop existing process on port ${port}`
+    if (health === "unhealthy") {
+      // Server is returning 500 errors - likely Turbopack panic or cache corruption
+      console.log(
+        `[Dev Server] Server on port ${port} is returning 500 errors. Clearing cache...`
       );
-      return false;
+      await stopDevServer(port);
+      await sleep(1000);
+      // Clear the entire .next cache to fix Turbopack corruption
+      cleanupNextCache(projectDir);
+      await sleep(500);
+    } else {
+      // Process exists but not responding at all - kill it and restart
+      console.log(
+        `[Dev Server] Port ${port} occupied but not responding. Killing PID ${status.pid}...`
+      );
+      const stopped = await stopDevServer(port);
+      if (!stopped) {
+        console.error(
+          `[Dev Server] Failed to stop existing process on port ${port}`
+        );
+        return false;
+      }
+      // Small delay to ensure port is released
+      await sleep(1000);
     }
-    // Small delay to ensure port is released
-    await sleep(1000);
   }
 
   // Start the server

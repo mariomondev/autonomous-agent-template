@@ -27,8 +27,15 @@ import {
   type FeatureStatus,
 } from "./db.js";
 
+import {
+  ensureDevServer,
+  stopDevServer,
+  checkDevServer,
+} from "./dev-server.js";
+
 const projectDir = process.env.AUTONOMOUS_PROJECT_DIR;
 const sessionId = parseInt(process.env.AUTONOMOUS_SESSION_ID || "0", 10);
+const port = parseInt(process.env.AUTONOMOUS_PORT || "4242", 10);
 const MAX_RETRIES = 3;
 
 if (!projectDir) {
@@ -419,6 +426,133 @@ server.registerTool(
         },
       ],
     };
+  }
+);
+
+// Server control tools
+
+server.registerTool(
+  "start_server",
+  {
+    description:
+      "Start the dev server. Call this BEFORE using browser/Playwright to verify UI. The server takes a few seconds to start. Returns when server is ready.",
+    inputSchema: {},
+  },
+  async () => {
+    // Check if already running
+    const status = await checkDevServer(port);
+    if (status.running) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Dev server already running on http://localhost:${port}`,
+          },
+        ],
+      };
+    }
+
+    // Start the server
+    const ready = await ensureDevServer({
+      projectDir: projectDir!,
+      port,
+      timeout: 60000,
+    });
+
+    if (ready) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Dev server started and ready on http://localhost:${port}`,
+          },
+        ],
+      };
+    } else {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to start dev server. Check .autonomous/dev-server.log for details.`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "stop_server",
+  {
+    description:
+      "Stop the dev server. Call this BEFORE editing code files to prevent hot-reload crashes. Editing files while the server is running can cause it to hang.",
+    inputSchema: {},
+  },
+  async () => {
+    const status = await checkDevServer(port);
+    if (!status.running) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Dev server is not running.`,
+          },
+        ],
+      };
+    }
+
+    const stopped = await stopDevServer(port);
+
+    if (stopped) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Dev server stopped.`,
+          },
+        ],
+      };
+    } else {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to stop dev server (PID ${status.pid}). It may be hung.`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "server_status",
+  {
+    description: "Check if the dev server is currently running.",
+    inputSchema: {},
+  },
+  async () => {
+    const status = await checkDevServer(port);
+
+    if (status.running) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Dev server is running on http://localhost:${port} (PID: ${status.pid})`,
+          },
+        ],
+      };
+    } else {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Dev server is not running.`,
+          },
+        ],
+      };
+    }
   }
 );
 

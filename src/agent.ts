@@ -22,7 +22,7 @@ import {
   getKanbanStats,
   getNotesForFeature,
 } from "./db.js";
-import { ensureDevServer } from "./dev-server.js";
+// Dev server is now controlled by the agent via MCP tools
 import fs from "fs";
 import path from "path";
 
@@ -137,7 +137,7 @@ function buildSessionContext(
 ## SESSION CONTEXT
 
 ### Environment
-- **Dev server:** Running on http://localhost:${port} (managed by orchestrator)
+- **Dev server:** http://localhost:${port} (YOU control it via start_server/stop_server MCP tools)
 - **Project directory:** Working directory is the target project
 
 ### Your Assignment (${batchFeatures.length} features from "${category}" category)
@@ -332,21 +332,9 @@ export async function runAutonomousAgent({
     // Capture pre-session completed count for verification
     const preSessionCompleted = kanbanStats.completed;
 
-    // Ensure dev server is running before starting session
-    const serverReady = await ensureDevServer({
-      projectDir: absoluteProjectDir,
-      port,
-      timeout: 60000, // 60 seconds to start
-    });
-
-    if (!serverReady) {
-      console.error(
-        "[Pre-session] Dev server failed to start. Skipping session."
-      );
-      console.error("Check .autonomous/dev-server.log for details.");
-      await sleep(5000);
-      continue; // Skip this iteration and retry
-    }
+    // Note: Dev server is controlled by the agent via MCP tools (start_server/stop_server)
+    // The agent will start it when needed for UI verification and stop it before editing files
+    // This prevents hot-reload crashes during development
 
     // Create session record
     const sessionId = startSession(absoluteProjectDir);
