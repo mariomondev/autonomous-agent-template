@@ -72,6 +72,11 @@ Assign each feature to exactly ONE category using lowercase slugs:
 
 **Custom categories:** Create your own using the pattern `feature-area` (lowercase, hyphenated).
 
+**Sub-categories for timing:** When features of the same type must be implemented at different times, use sub-categories:
+- `mock-data-files` → `mock-data-validation` (validation needs UI to exist first)
+- `auth-setup` → `auth-advanced` (MFA after basic auth works)
+- `ui-layout` → `ui-polish` (polish after functionality complete)
+
 ---
 
 ## Rules for Generating Features
@@ -106,9 +111,29 @@ Each step should describe a browser action that can be automated:
 - If bigger, split into multiple features
 - If smaller, combine with related functionality
 
-### 5. Ordering (CRITICAL)
+### 5. Category Grouping (CRITICAL)
 
-Order features by implementation dependency:
+**All features with the same category MUST have contiguous IDs.** The orchestrator batches features by category, so splitting a category across non-contiguous IDs causes features to run at the wrong time.
+
+❌ **Wrong** - same category split across IDs:
+```
+ID 5-11:  mock-data (creating files)
+ID 12-45: other categories...
+ID 46-50: mock-data (validation)  ← PROBLEM: will run with IDs 5-11
+```
+
+✅ **Correct** - use sub-categories when needed:
+```
+ID 5-11:  mock-data-files (creating files)
+ID 12-45: other categories...
+ID 46-50: mock-data-validation (validation after UI exists)
+```
+
+**Rule:** If features of the same "type" need to be implemented at different times (due to dependencies), create sub-categories using the pattern `type-phase` or `type-purpose`.
+
+### 6. Ordering by Dependency
+
+Within the constraint of contiguous categories, order features by implementation dependency:
 
 1. **Foundation** (auth, database setup, core layouts)
 2. **Core CRUD** (create, read operations)
@@ -116,7 +141,9 @@ Order features by implementation dependency:
 4. **UI Polish** (loading states, error handling)
 5. **Advanced Features** (search, filters, exports)
 
-### 6. Include Both Happy Path and Edge Cases
+Plan your categories first, then assign contiguous ID ranges to each.
+
+### 7. Include Both Happy Path and Edge Cases
 
 For each major feature area, include:
 
@@ -168,14 +195,22 @@ INSERT INTO features (id, name, description, category, testing_steps, status, re
 
 Before finalizing, verify:
 
+**Category Contiguity (MOST IMPORTANT):**
+- [ ] Each category appears exactly ONCE in the ID sequence (no category split across non-contiguous IDs)
+- [ ] Features that need to run at different times use sub-categories (e.g., `mock-data-files`, `mock-data-validation`)
+
+**Structure:**
 - [ ] Every feature has a unique sequential `id` (1, 2, 3, ...)
 - [ ] Every feature has a `category` assigned
-- [ ] Every feature has a clear success criteria in testing_steps
 - [ ] No feature depends on another that comes later in the list
+- [ ] Feature names are unique (no duplicates)
+
+**Content:**
+- [ ] Every feature has clear success criteria in testing_steps
 - [ ] Testing steps use concrete values (not "valid email" but "test@example.com")
 - [ ] Error scenarios are covered for user-facing forms
 - [ ] Empty states are tested (no data, first-time user)
+
+**Defaults:**
 - [ ] All `status` fields are set to `'pending'`
 - [ ] All `retry_count` fields are set to `0`
-- [ ] Feature names are unique (no duplicates)
-- [ ] Features are grouped by category for efficient batching
