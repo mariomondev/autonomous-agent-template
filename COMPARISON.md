@@ -14,7 +14,7 @@ A feature-by-feature comparison of our autonomous-agent-template against [Anthro
 | **Session Tracking** | Minimal | Full (cost, duration, errors) |
 | **Context System** | Single progress file | Hierarchical notes (global/category/feature) |
 | **Crash Recovery** | Manual (git reset) | Automatic (orphan reset + circuit breaker) |
-| **Dev Server** | Manual (init.sh) | Automatic management |
+| **Dev Server** | Manual (init.sh) | Agent-controlled via MCP |
 | **Command Validation** | Basic allowlist | Allowlist + semantic validation |
 
 ---
@@ -221,25 +221,23 @@ if (consecutiveFailures >= 3) {
 
 - Manual step breaks automation
 - No health checking
-- No automatic restart on failure
+- Hot-reload crashes during edits
 - Port conflicts not handled
 
-### Ours: Automatic Lifecycle
+### Ours: Agent-Controlled via MCP
 ```typescript
-// Before each session:
-ensureDevServerRunning(port)
-├── Detect: Is server running on port?
-├── Start: If not, spawn detached process
-├── Wait: Poll until HTTP responds (60s timeout)
-└── Log: Output to .autonomous/dev-server.log
+// Agent controls server lifecycle via MCP tools:
+stop_server()   // Before editing files (prevents hot-reload crashes)
+start_server()  // Before UI verification (waits until ready)
+server_status() // Check current state
 ```
 
-- **Fully autonomous**: No manual steps
-- **Health polling**: Confirms server is ready before session
-- **Detached process**: Survives orchestrator exit
-- **Port-aware cleanup**: Kills orphaned servers on restart
+- **No hot-reload crashes**: Server stopped during edits
+- **On-demand startup**: Only runs when verifying UI
+- **Health polling**: Waits until HTTP responds before returning
+- **SIGKILL fallback**: Force-kills hung processes
 
-**Why it matters**: True autonomy means no human in the loop.
+**Why it matters**: Hot-reload + mid-edit broken code = hung servers. Agent controls the lifecycle.
 
 ---
 
@@ -352,14 +350,14 @@ log(`Claimed: ${claimed} | Verified: ${actual}`)
 │  │ Inner Agent  │ ◄────────────────│    MCP Server       │   │
 │  │ (Claude Code)│    structured     │  (mcp-server.ts)    │   │
 │  └──────────────┘    validated      └─────────────────────┘   │
-│         │                                                       │
-│         │ runs                                                  │
-│         ▼                                                       │
-│  ┌──────────────┐                                               │
-│  │    Bash      │                                               │
-│  │  (allowlist  │                                               │
-│  │  + semantic  │                                               │
-│  │  validation) │                                               │
+│         │                                      │               │
+│         │ runs                                 │ controls      │
+│         ▼                                      ▼               │
+│  ┌──────────────┐                    ┌─────────────────────┐   │
+│  │    Bash      │                    │    Dev Server       │   │
+│  │  (allowlist  │                    │  (start/stop via    │   │
+│  │  + semantic  │                    │   MCP tools)        │   │
+│  │  validation) │                    └─────────────────────┘   │
 │  └──────────────┘                                               │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
@@ -376,7 +374,7 @@ log(`Claimed: ${claimed} | Verified: ${actual}`)
 | Context bloat | Single file grows forever | Scoped notes by category |
 | Slow progress | 1 feature per session | 5 features batched by category |
 | No cost tracking | Unknown spend | Per-session cost + duration |
-| Dev server dies | User restarts | Auto health-check + restart |
+| Hot-reload crashes | Server hangs | Agent stops server before edits |
 | Agent lies | Trusted | Verified against DB + UI checks |
 | Dangerous commands | Basic allowlist | Allowlist + semantic + protected files |
 | Repeated failures | Keeps retrying forever | Circuit breaker (3 failures → pause) |

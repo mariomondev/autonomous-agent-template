@@ -39,7 +39,8 @@ The system has two layers:
 - `src/client.ts` - Claude Agent SDK configuration with security hooks and MCP setup
 - `src/security.ts` - Bash command allowlist validation (defense layer 3 of 3)
 - `src/db.ts` - SQLite operations for features, sessions, and notes (uses `bun:sqlite`)
-- `src/mcp-server.ts` - MCP server exposing database tools to inner agent
+- `src/mcp-server.ts` - MCP server exposing database + dev server control tools to inner agent
+- `src/dev-server.ts` - Dev server lifecycle (start/stop/health check)
 - `src/progress.ts` - Progress tracking utilities and display
 
 ### Data Flow
@@ -47,9 +48,10 @@ The system has two layers:
 1. Orchestrator reads `<project>/.autonomous/db.sqlite` for pending features
 2. Generates `current_batch.json` with up to 5 features from one category
 3. Spawns inner agent with `prompts/coding_prompt.md` as instructions
-4. Inner agent implements features, updates status via MCP tools (features-db server)
-5. Session ends when batch complete or max turns reached
-6. Loop continues until all features complete
+4. Inner agent controls dev server via MCP tools (stop before edits, start before verification)
+5. Inner agent implements features, verifies with Playwright, updates status via MCP
+6. Session ends when batch complete or max turns reached
+7. Loop continues until all features complete
 
 ### Security Model (3 layers)
 

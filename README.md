@@ -69,11 +69,10 @@ bun run start ./your-project  # Start the agent
 ## How It Works
 
 1. Queries `db.sqlite` for next batch of features (max 5 from same category)
-2. Starts dev server on port 4242
-3. Implements features following your patterns
-4. Verifies with Playwright browser automation (headless by default)
-5. Updates feature status via MCP tools
-6. Repeats until all features complete
+2. Agent implements features (server stopped to prevent hot-reload crashes)
+3. Agent starts server via MCP tool, verifies with Playwright (headless by default)
+4. Updates feature status via MCP tools
+5. Repeats until all features complete
 
 ---
 
