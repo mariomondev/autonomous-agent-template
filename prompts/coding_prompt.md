@@ -58,16 +58,29 @@ If you find ANY issues:
 - Use the `feature_status` MCP tool to mark the feature for retry (status: "pending")
 - Fix all issues BEFORE moving to new features
 
-### STEP 4: CHOOSE ONE FEATURE
+### STEP 4: IMPLEMENT FEATURES IN ORDER
 
 Your assigned features are listed in the SESSION CONTEXT above under "Your Assignment".
-Focus on completing ONE feature perfectly, then move to the next in the batch.
 
-**Note:** The first feature in the batch is already marked as `in_progress` by the orchestrator.
-When moving to subsequent features, use the `feature_status` MCP tool:
-- Call `feature_status` with the feature_id and status "in_progress"
+**CRITICAL: You MUST implement features in the exact order listed (by ID, lowest first).**
 
-**IMPORTANT:** Always use the actual numeric ID from the assignment list.
+Features are ordered by dependency — earlier features are prerequisites for later ones. Skipping ahead will cause failures.
+
+**Workflow:**
+1. The first feature (lowest ID) is already marked `in_progress` by the orchestrator
+2. Complete that feature fully before moving to the next
+3. When starting the next feature, call `feature_status` with status "in_progress"
+4. Continue in strict ID order until batch is complete
+
+**Example:** If your batch is `[4, 5, 6]`:
+- Start with feature 4 (already `in_progress`)
+- Complete 4, mark it `completed`
+- Call `feature_status(5, "in_progress")`, implement feature 5
+- Complete 5, mark it `completed`
+- Call `feature_status(6, "in_progress")`, implement feature 6
+- Complete 6, mark it `completed`
+
+**NEVER skip features or implement them out of order.**
 
 ### STEP 5: IMPLEMENT THE FEATURE
 
@@ -270,9 +283,9 @@ git commit -m "fix: resolve race condition in data loading; add proper cleanup o
 
 Where type is: feat, fix, refactor, docs, test, chore
 
-### STEP 9: END SESSION (AFTER 5 FEATURES OR WHEN DONE)
+### STEP 9: END SESSION (AFTER BATCH COMPLETE OR WHEN DONE)
 
-**STOP after completing 5 features** to keep context fresh. You can complete fewer if you encounter issues or context feels cluttered.
+**STOP after completing your assigned batch** to keep context fresh. You can complete fewer if you encounter issues or context feels cluttered.
 
 Checklist before ending:
 
@@ -287,7 +300,7 @@ Checklist before ending:
 
 ## IMPORTANT REMINDERS
 
-**This Session's Goal:** Complete up to 5 features maximum, then END your session. The orchestrator will start a fresh session to continue.
+**This Session's Goal:** Complete your assigned batch of features, then END your session. The orchestrator will start a fresh session to continue.
 
 **Priority:** Fix broken tests before implementing new features
 

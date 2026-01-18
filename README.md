@@ -18,7 +18,7 @@ bun reset:temp      # Reset to skeleton (empty app)
 bun run start:temp  # Watch the agent implement 3 features
 ```
 
-The agent will implement a counter app from scratch: display, increment button, decrement button. View detailed logs at `temp/.autonomous/session.log`.
+The agent will implement a counter app from scratch: display, increment button, decrement button. View detailed logs at `temp/.autonomous/session-*.log`.
 
 ---
 
@@ -68,11 +68,48 @@ bun run start ./your-project  # Start the agent
 
 ## How It Works
 
-1. Queries `db.sqlite` for next batch of features (max 5 from same category)
-2. Agent implements features (server stopped to prevent hot-reload crashes)
-3. Agent starts server via MCP tool, verifies with Playwright (headless by default)
-4. Updates feature status via MCP tools
-5. Repeats until all features complete
+```
+SETUP                          ORCHESTRATOR                    INNER AGENT
+─────                          ────────────                    ───────────
+app_spec.txt ──┐
+               ├─→ db.sqlite ─→ Get next batch ─────────────→ Read spec & code
+features.sql ──┘               (3 features,                   Stop server
+                               same category)                  Write code
+                                     │                         Start server
+                                     │                         Verify with Playwright
+                               Track completion ←───────────── Update status via MCP
+                                     │                         Git commit
+                                     ↓                              │
+                               Next batch or done ←─────────────────┘
+```
+
+### Orchestrator Loop
+
+1. **Validate** — Check category contiguity (fail fast if features malformed)
+2. **Batch** — Get up to 3 pending features from category with lowest ID
+3. **Spawn** — Run inner agent with batch + context + notes from previous sessions
+4. **Track** — Monitor feature completions, capture cost/tokens
+5. **Recover** — On failure, add automatic note for next session
+6. **Repeat** — Continue until all features complete or circuit breaker trips
+
+### Inner Agent (per session)
+
+1. Read `app_spec.txt` and explore existing code
+2. Implement features **in strict ID order** (dependencies)
+3. Stop server → edit code → start server → verify with Playwright
+4. Mark features completed/pending via MCP tools
+5. Commit progress, end session
+
+### Safety Mechanisms
+
+| Mechanism | Purpose |
+|-----------|---------|
+| Category contiguity validation | Prevents features running out of order |
+| Circuit breaker (3 failures) | Stops runaway failures |
+| Automatic failure notes | Preserves context across crashes |
+| Orphan/stale reset | Unsticks abandoned features |
+| Retry limit (3 attempts) | Auto-fails stuck features |
+| Bash allowlist | Blocks dangerous commands |
 
 ---
 

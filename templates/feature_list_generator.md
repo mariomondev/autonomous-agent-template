@@ -10,6 +10,17 @@ mkdir -p .autonomous  # Create folder if needed
 
 ---
 
+> ⚠️ **CRITICAL: CATEGORY UNIQUENESS RULE**
+>
+> **Each category name must appear EXACTLY ONCE in your feature list as a contiguous block of IDs.**
+>
+> The orchestrator processes features by category. If you use the same category name in two different places (e.g., IDs 1-5 and IDs 20-25), features will execute in the wrong order.
+>
+> **Wrong:** `auth` at IDs 1-5, then `dashboard` at 6-15, then `auth` again at 16-20
+> **Correct:** Use sub-categories: `auth-basic` (1-5), `dashboard` (6-15), `auth-advanced` (16-20)
+
+---
+
 ## Instructions for the LLM
 
 Generate a `features.sql` file from the provided `app_spec.txt`. Each feature should map to ONE testable behavior that can be verified through browser automation.
@@ -214,3 +225,32 @@ Before finalizing, verify:
 **Defaults:**
 - [ ] All `status` fields are set to `'pending'`
 - [ ] All `retry_count` fields are set to `0`
+
+---
+
+## Final Validation (REQUIRED)
+
+**After generating the features.sql, you MUST perform this self-check:**
+
+1. **List all categories in order of first appearance:**
+   ```
+   Category "X" first appears at ID Y
+   Category "Z" first appears at ID W
+   ...
+   ```
+
+2. **Verify each category appears only once:**
+   - Scan through your INSERT statements
+   - Confirm no category name is reused after switching to a different category
+   - If you find a violation, fix it by renaming to a sub-category
+
+3. **Output a validation summary:**
+   ```
+   ✓ Category validation passed: [N] unique categories, all contiguous
+   ```
+   OR
+   ```
+   ✗ Category validation FAILED: [category] appears at IDs X-Y and again at IDs Z-W
+   ```
+
+**The orchestrator will reject the database if categories are not contiguous. Fix any violations before saving.**

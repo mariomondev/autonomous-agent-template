@@ -9,7 +9,7 @@ A feature-by-feature comparison of our autonomous-agent-template against [Anthro
 | Aspect | Anthropic Harness | Our Template |
 |--------|-------------------|--------------|
 | **State Management** | JSON files | SQLite database |
-| **Feature Batching** | Single feature | 5 features per session |
+| **Feature Batching** | Single feature | 3 features per session |
 | **Agent Communication** | File reads | MCP server |
 | **Session Tracking** | Minimal | Full (cost, duration, errors) |
 | **Context System** | Single progress file | Hierarchical notes (global/category/feature) |
@@ -372,7 +372,7 @@ log(`Claimed: ${claimed} | Verified: ${actual}`)
 | Agent corrupts state | Hope it doesn't | MCP validation layer |
 | Session crashes | Manual git reset | Auto orphan recovery + circuit breaker |
 | Context bloat | Single file grows forever | Scoped notes by category |
-| Slow progress | 1 feature per session | 5 features batched by category |
+| Slow progress | 1 feature per session | 3 features batched by category |
 | No cost tracking | Unknown spend | Per-session cost + duration |
 | Hot-reload crashes | Server hangs | Agent stops server before edits |
 | Agent lies | Trusted | Verified against DB + UI checks |

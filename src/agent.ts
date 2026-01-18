@@ -21,6 +21,8 @@ import {
   setFeatureStatus,
   getKanbanStats,
   getNotesForFeature,
+  validateCategoryContiguity,
+  addNote,
 } from "./db.js";
 // Dev server is now controlled by the agent via MCP tools
 import fs from "fs";
@@ -213,6 +215,16 @@ export async function runAutonomousAgent({
   // Initialize database connection
   initDatabase(absoluteProjectDir);
 
+  // Validate category contiguity before starting
+  // This catches feature generation errors early (fail-fast)
+  try {
+    validateCategoryContiguity(absoluteProjectDir);
+  } catch (error) {
+    console.error(`\nError: ${error instanceof Error ? error.message : error}`);
+    console.error(`\nFix your features.sql and reload the database.`);
+    process.exit(1);
+  }
+
   // Reset any features left in 'in_progress' from crashed sessions
   const orphaned = resetOrphanedFeatures(absoluteProjectDir);
   if (orphaned > 0) {
@@ -291,8 +303,9 @@ export async function runAutonomousAgent({
 
     const sessionStart = new Date();
 
-    // Generate current_batch.json for this session (max 5 features per batch)
-    const batchFeatures = getNextFeatures(absoluteProjectDir, 5);
+    // Generate current_batch.json for this session (max 3 features per batch)
+    // 3 is a balance: enough for related work, small enough to avoid context exhaustion
+    const batchFeatures = getNextFeatures(absoluteProjectDir, 3);
     const batchPath = path.join(autonomousDir, "current_batch.json");
     fs.writeFileSync(batchPath, JSON.stringify(batchFeatures, null, 2));
 
@@ -350,8 +363,11 @@ export async function runAutonomousAgent({
 
     let sessionStats: SessionStats | null = null;
 
-    // Log file for verbose agent output
-    const logPath = path.join(autonomousDir, "session.log");
+    // Log file for verbose agent output (one per session for easier review)
+    const logPath = path.join(
+      autonomousDir,
+      `session-${String(sessionId).padStart(3, "0")}.log`
+    );
 
     try {
       // Run a single agent session
@@ -410,6 +426,24 @@ export async function runAutonomousAgent({
         `[Consecutive failures: ${consecutiveFailures}/${maxConsecutiveFailures}]`
       );
 
+      // Add automatic failure note so next session knows what happened
+      const featureIds = batchFeatures.map((f) => f.id).join(", ");
+      const failureNote = `Session ${sessionId} failed while working on feature(s) [${featureIds}]. Error: ${errMsg}. Check session-${String(sessionId).padStart(3, "0")}.log for details.`;
+
+      try {
+        // Add as global note (visible to all future sessions)
+        addNote(absoluteProjectDir, {
+          featureId: null,
+          category: null,
+          content: failureNote,
+          sessionId,
+        });
+        console.log(`[Auto-note added for next session]`);
+      } catch {
+        // If we can't add the note (e.g., DB locked), continue anyway
+        console.log(`[Warning: Could not add failure note to database]`);
+      }
+
       console.log("Retrying in 5s...");
       await sleep(5000);
 
@@ -459,7 +493,7 @@ export async function runAutonomousAgent({
   console.log(
     `Features: ${finalStats.completed}/${finalStats.total} completed`
   );
-  console.log(`Log: ${path.join(autonomousDir, "session.log")}`);
+  console.log(`Logs: ${path.join(autonomousDir, "session-*.log")}`);
 
   if (!hasIncompleteFeatures(absoluteProjectDir)) {
     console.log(`\nRun: cd ${absoluteProjectDir} && PORT=${port} bun run dev`);

@@ -199,6 +199,7 @@ process.on("uncaughtException", (error) => {
 runAutonomousAgent({ projectDir, maxIterations, port, model, force, headless })
   .then(() => {
     cleanup();
+    console.log("Exiting...");
     process.exit(0);
   })
   .catch((error) => {

@@ -46,7 +46,7 @@ The system has two layers:
 ### Data Flow
 
 1. Orchestrator reads `<project>/.autonomous/db.sqlite` for pending features
-2. Generates `current_batch.json` with up to 5 features from one category
+2. Generates `current_batch.json` with up to 3 features from one category
 3. Spawns inner agent with `prompts/coding_prompt.md` as instructions
 4. Inner agent controls dev server via MCP tools (stop before edits, start before verification)
 5. Inner agent implements features, verifies with Playwright, updates status via MCP

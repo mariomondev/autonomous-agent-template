@@ -176,12 +176,13 @@ function getDatabase(projectDir: string): Database {
 }
 
 /**
- * Get the next batch of features to work on (default 5 from same category).
+ * Get the next batch of features to work on (default 3 from same category).
  * Returns features grouped by category, prioritizing categories with pending features.
+ * Batch size of 3 balances efficiency with context management.
  */
 export function getNextFeatures(
   projectDir: string,
-  limit: number = 10
+  limit: number = 3
 ): Feature[] {
   const db = getDatabase(projectDir);
 
@@ -635,6 +636,53 @@ export function resetStaleFeatures(
     )
     .run(maxHours);
   return result.changes;
+}
+
+// ============================================================================
+// Kanban Stats
+// ============================================================================
+
+// ============================================================================
+// Validation
+// ============================================================================
+
+/**
+ * Validate that all features with the same category have contiguous IDs.
+ * This is critical because the orchestrator batches features by category,
+ * and non-contiguous IDs would cause features to run at the wrong time.
+ *
+ * @throws Error if a category appears in non-contiguous ID ranges
+ */
+export function validateCategoryContiguity(projectDir: string): void {
+  const db = getDatabase(projectDir);
+
+  const features = db
+    .query(`SELECT id, category FROM features ORDER BY id ASC`)
+    .all() as Array<{ id: number; category: string }>;
+
+  if (features.length === 0) return;
+
+  const seenCategories = new Set<string>();
+  let lastCategory: string | null = null;
+
+  for (const feature of features) {
+    if (feature.category !== lastCategory) {
+      // Category changed - check if we've seen it before
+      if (seenCategories.has(feature.category)) {
+        // Find the original range for context
+        const firstOccurrence = features.find(
+          (f) => f.category === feature.category
+        );
+        throw new Error(
+          `Category contiguity violation: '${feature.category}' appears at ID ${firstOccurrence?.id} and again at ID ${feature.id}.\n` +
+            `Categories must have contiguous IDs. Use sub-categories like '${feature.category}-phase1' and '${feature.category}-phase2' ` +
+            `if features of the same type need to run at different times.`
+        );
+      }
+      seenCategories.add(feature.category);
+      lastCategory = feature.category;
+    }
+  }
 }
 
 // ============================================================================
