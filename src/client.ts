@@ -75,10 +75,25 @@ function loadProtectedFiles(projectDir: string): ProtectedFilesConfig {
   return { files: [], patterns: [] };
 }
 
+/**
+ * Load the static coding prompt (instructions for how the agent should behave).
+ * This goes in systemPrompt for potential caching benefits.
+ */
+export function loadCodingPrompt(port: number): string {
+  const promptPath = path.join(__dirname, "..", "prompts", "coding_prompt.md");
+  if (!fs.existsSync(promptPath)) {
+    throw new Error(`Coding prompt not found at ${promptPath}`);
+  }
+  let prompt = fs.readFileSync(promptPath, "utf-8");
+  // Replace port placeholder
+  return prompt.replace(/\{\{PORT\}\}/g, String(port));
+}
+
 export function getClientOptions(
   projectDir: string,
   model: string,
-  env?: Record<string, string>
+  env?: Record<string, string>,
+  systemPrompt?: string
 ) {
   const absoluteProjectDir = path.resolve(projectDir);
   const autonomousDir = path.join(absoluteProjectDir, ".autonomous");
@@ -102,8 +117,10 @@ export function getClientOptions(
     cwd: absoluteProjectDir,
     // Pass environment variables to child processes
     env: env ? { ...process.env, ...env } : process.env,
-    // Claude Code automatically reads CLAUDE.md for project-specific instructions
+    // Static instructions go in systemPrompt (better for caching)
+    // Claude Code also reads CLAUDE.md for project-specific instructions
     systemPrompt:
+      systemPrompt ||
       "You are an expert full-stack developer. Follow the patterns in the existing codebase. Verify features with browser automation.",
     permissionMode: "acceptEdits" as const,
     maxTurns: 1000,

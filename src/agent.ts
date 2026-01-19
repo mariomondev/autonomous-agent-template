@@ -8,7 +8,7 @@
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { printProgressSummary, AUTONOMOUS_DIR } from "./progress.js";
-import { getClientOptions } from "./client.js";
+import { getClientOptions, loadCodingPrompt } from "./client.js";
 import {
   initDatabase,
   getNextFeatures,
@@ -18,7 +18,6 @@ import {
   resetOrphanedFeatures,
   resetStaleFeatures,
   hasIncompleteFeatures,
-  setFeatureStatus,
   getKanbanStats,
   getNotesForFeature,
   validateCategoryContiguity,
@@ -122,13 +121,9 @@ function buildSessionContext(
   const category = batchFeatures[0]?.category || "uncategorized";
   const notes = getRelevantNotes(projectDir, category);
 
-  // Format the batch as a nice table
+  // Format the batch as a nice table (all pending - agent marks them in_progress)
   const batchTable = batchFeatures
-    .map((f, i) => {
-      const status = i === 0 ? "in_progress" : "pending";
-      const marker = status === "in_progress" ? "→" : " ";
-      return `${marker} ${f.id}: ${f.name} [${status}]`;
-    })
+    .map((f) => `  ${f.id}: ${f.name} [pending]`)
     .join("\n");
 
   const total =
@@ -148,7 +143,7 @@ function buildSessionContext(
 ${batchTable}
 \`\`\`
 
-Feature ${batchFeatures[0]?.id} ("${batchFeatures[0]?.name}") is already marked as in_progress.
+Start with feature ${batchFeatures[0]?.id} ("${batchFeatures[0]?.name}"). Mark it as in_progress before starting work.
 
 ### Progress: ${stats.completed}/${total} completed (${pct}%) | ${stats.pending} pending | ${stats.failed} failed
 ${notes}
@@ -168,11 +163,25 @@ interface SessionStats {
 
 /**
  * Format a compact stats line for session summary.
- * Shows: duration | cost
+ * Shows: duration | cost | cache info (if any)
  */
 function formatSessionStats(stats: SessionStats, duration: number): string {
   const durationStr = formatDuration(duration);
-  return `${durationStr} | $${stats.costUsd.toFixed(2)}`;
+  let result = `${durationStr} | $${stats.costUsd.toFixed(2)}`;
+
+  // Show cache stats if caching is being used
+  if (stats.cacheReadTokens > 0 || stats.cacheWriteTokens > 0) {
+    const cacheInfo = [];
+    if (stats.cacheWriteTokens > 0) {
+      cacheInfo.push(`cache_write: ${stats.cacheWriteTokens}`);
+    }
+    if (stats.cacheReadTokens > 0) {
+      cacheInfo.push(`cache_read: ${stats.cacheReadTokens}`);
+    }
+    result += ` | ${cacheInfo.join(", ")}`;
+  }
+
+  return result;
 }
 
 export async function runAutonomousAgent({
@@ -253,20 +262,8 @@ export async function runAutonomousAgent({
     process.exit(1);
   }
 
-  // Load the coding prompt
-  const promptPath = path.join(
-    import.meta.dirname,
-    "..",
-    "prompts",
-    "coding_prompt.md"
-  );
-  if (!fs.existsSync(promptPath)) {
-    console.error(`Error: Prompt file not found at ${promptPath}`);
-    process.exit(1);
-  }
-  // Load prompt and replace port placeholder
-  let codingPrompt = fs.readFileSync(promptPath, "utf-8");
-  codingPrompt = codingPrompt.replace(/\{\{PORT\}\}/g, String(port));
+  // Load the coding prompt (static instructions - goes in systemPrompt for caching)
+  const codingPrompt = loadCodingPrompt(port);
 
   let iteration = 0;
   const totalStart = new Date();
@@ -303,16 +300,9 @@ export async function runAutonomousAgent({
 
     const sessionStart = new Date();
 
-    // Generate current_batch.json for this session (max 3 features per batch)
+    // Get next batch of features (max 3 per session)
     // 3 is a balance: enough for related work, small enough to avoid context exhaustion
     const batchFeatures = getNextFeatures(absoluteProjectDir, 3);
-    const batchPath = path.join(autonomousDir, "current_batch.json");
-    fs.writeFileSync(batchPath, JSON.stringify(batchFeatures, null, 2));
-
-    // Mark the first feature as in_progress
-    if (batchFeatures.length > 0 && batchFeatures[0].id !== undefined) {
-      setFeatureStatus(absoluteProjectDir, batchFeatures[0].id, "in_progress");
-    }
 
     // Compact session header
     const progressStats = getProgressStats(absoluteProjectDir);
@@ -332,7 +322,8 @@ export async function runAutonomousAgent({
       }
     }
 
-    // Build enriched prompt with injected context
+    // Build session context (dynamic info: batch, progress, notes)
+    // Static instructions are in systemPrompt (codingPrompt) for caching
     const kanbanStats = getKanbanStats(absoluteProjectDir);
     const sessionContext = buildSessionContext(
       absoluteProjectDir,
@@ -340,7 +331,6 @@ export async function runAutonomousAgent({
       kanbanStats,
       port
     );
-    const enrichedPrompt = sessionContext + codingPrompt;
 
     // Capture pre-session completed count for verification
     const preSessionCompleted = kanbanStats.completed;
@@ -371,10 +361,12 @@ export async function runAutonomousAgent({
 
     try {
       // Run a single agent session
+      // systemPrompt = static instructions (codingPrompt), prompt = dynamic context
       sessionStats = await runAgentSession(
         absoluteProjectDir,
         model,
-        enrichedPrompt,
+        codingPrompt,
+        sessionContext,
         agentEnv,
         featureLookup,
         logPath
@@ -505,12 +497,14 @@ export async function runAutonomousAgent({
 async function runAgentSession(
   projectDir: string,
   model: string,
+  systemPrompt: string,
   prompt: string,
   env: Record<string, string>,
   featureLookup: FeatureLookup = {},
   logPath: string
 ): Promise<SessionStats> {
-  const options = getClientOptions(projectDir, model, env);
+  // systemPrompt = static instructions (cached), prompt = dynamic session context
+  const options = getClientOptions(projectDir, model, env, systemPrompt);
 
   const response = query({
     prompt,
@@ -554,49 +548,58 @@ async function runAgentSession(
               // Write to log file instead of console
               log(block.text);
             } else if (block.type === "tool_use") {
-              // Log tool calls to file
-              log(`\n[Tool: ${block.name}]\n`);
-
-              // Handle tool calls - check for feature_status updates
-              const toolName = block.name;
-              const toolInput = block.input;
-
-              if (toolName?.endsWith("feature_status") && toolInput) {
-                const featureId = toolInput.feature_id;
-                const status = toolInput.status;
-                const feature = featureLookup[featureId];
-
-                if (feature && status) {
-                  const statusIcon =
-                    status === "completed"
-                      ? "✓"
-                      : status === "in_progress"
-                      ? "→"
-                      : status === "pending"
-                      ? "↻"
-                      : "✗";
-                  // Print to console - this is important status info
-                  console.log(
-                    `  [${statusIcon}] Feature ${featureId}: "${feature.name}" → ${status}`
-                  );
-                  log(
-                    `[${statusIcon}] Feature ${featureId}: "${feature.name}" → ${status}\n`
-                  );
-
-                  if (status === "completed") {
-                    completedCount++;
-                    stats.featuresCompleted = completedCount;
-                  }
-                }
-              }
+              // Log tool use blocks (these appear before tool_call events)
+              log(`\n[Tool Request: ${block.name}]\n`);
             }
           }
         }
         break;
 
-      case "user":
-        // Tool results come back as user messages - log to file
-        log("\n[Tool Result]\n");
+      case "tool_call":
+        // Tool is being executed - log name and full input
+        const toolName = msg.tool_name;
+        const toolInput = msg.input;
+
+        log(`\n[Tool Call: ${toolName}]\n`);
+        log(`Input: ${JSON.stringify(toolInput, null, 2)}\n`);
+
+        // Handle feature_status updates for live console output
+        if (toolName?.endsWith("feature_status") && toolInput) {
+          const featureId = toolInput.feature_id;
+          const status = toolInput.status;
+          const feature = featureLookup[featureId];
+
+          if (feature && status) {
+            const statusIcon =
+              status === "completed"
+                ? "✓"
+                : status === "in_progress"
+                ? "→"
+                : status === "pending"
+                ? "↻"
+                : "✗";
+            // Print to console - this is important status info
+            console.log(
+              `  [${statusIcon}] Feature ${featureId}: "${feature.name}" → ${status}`
+            );
+
+            if (status === "completed") {
+              completedCount++;
+              stats.featuresCompleted = completedCount;
+            }
+          }
+        }
+        break;
+
+      case "tool_result":
+        // Tool execution completed - log name and full result
+        log(`\n[Tool Result: ${msg.tool_name}]\n`);
+        const result = msg.result;
+        if (typeof result === "string") {
+          log(`${result}\n`);
+        } else {
+          log(`${JSON.stringify(result, null, 2)}\n`);
+        }
         break;
 
       case "error":
@@ -619,7 +622,12 @@ async function runAgentSession(
           stats.cacheWriteTokens = msg.usage.cache_creation_input_tokens ?? 0;
         }
         stats.costUsd = msg.total_cost_usd ?? 0;
-        log(`\n[Result] Cost: $${stats.costUsd.toFixed(2)}\n`);
+        log(`\n[Result] Cost: $${stats.costUsd.toFixed(2)}`);
+        log(` | Tokens: ${stats.inputTokens} in, ${stats.outputTokens} out`);
+        if (stats.cacheReadTokens > 0 || stats.cacheWriteTokens > 0) {
+          log(` | Cache: ${stats.cacheWriteTokens} write, ${stats.cacheReadTokens} read`);
+        }
+        log(`\n`);
         break;
     }
   }

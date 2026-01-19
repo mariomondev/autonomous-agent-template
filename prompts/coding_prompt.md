@@ -67,13 +67,13 @@ Your assigned features are listed in the SESSION CONTEXT above under "Your Assig
 Features are ordered by dependency — earlier features are prerequisites for later ones. Skipping ahead will cause failures.
 
 **Workflow:**
-1. The first feature (lowest ID) is already marked `in_progress` by the orchestrator
-2. Complete that feature fully before moving to the next
-3. When starting the next feature, call `feature_status` with status "in_progress"
+1. Call `feature_status` with status "in_progress" for the first feature
+2. Complete that feature fully
+3. Mark it `completed`, then call `feature_status` with "in_progress" for the next
 4. Continue in strict ID order until batch is complete
 
 **Example:** If your batch is `[4, 5, 6]`:
-- Start with feature 4 (already `in_progress`)
+- Call `feature_status(4, "in_progress")`, implement feature 4
 - Complete 4, mark it `completed`
 - Call `feature_status(5, "in_progress")`, implement feature 5
 - Complete 5, mark it `completed`
