@@ -304,13 +304,6 @@ export async function runAutonomousAgent({
     // 3 is a balance: enough for related work, small enough to avoid context exhaustion
     const batchFeatures = getNextFeatures(absoluteProjectDir, 3);
 
-    // Compact session header
-    const progressStats = getProgressStats(absoluteProjectDir);
-    const firstFeature = batchFeatures[0];
-    console.log(
-      `\n[Starting Session ${iteration}] ${progressStats.completed}/${progressStats.total} done | Batch: ${batchFeatures.length} features | Next: "${firstFeature?.name}"`
-    );
-
     // Build feature lookup for live updates
     const featureLookup: FeatureLookup = {};
     for (const f of batchFeatures) {
@@ -339,8 +332,18 @@ export async function runAutonomousAgent({
     // The agent will start it when needed for UI verification and stop it before editing files
     // This prevents hot-reload crashes during development
 
-    // Create session record
+    // Create session record (do this before logging so we have the ID)
     const sessionId = startSession(absoluteProjectDir);
+
+    // Session header with database session ID (persists across restarts)
+    const progressStats = getProgressStats(absoluteProjectDir);
+    const firstFeature = batchFeatures[0];
+    const pct = progressStats.total > 0
+      ? Math.round((progressStats.completed / progressStats.total) * 100)
+      : 0;
+    console.log(
+      `\n[Session ${sessionId}] ${progressStats.completed}/${progressStats.total} (${pct}%) | Batch: ${batchFeatures.length} | Next: "${firstFeature?.name}"`
+    );
 
     // Prepare environment variables for CLI commands
     const agentEnv = {
@@ -410,7 +413,7 @@ export async function runAutonomousAgent({
       });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
-      console.error(`\n[Session ${iteration} Error] ${errMsg}`);
+      console.error(`\n[Session ${sessionId} Error] ${errMsg}`);
 
       // Increment circuit breaker counter
       consecutiveFailures++;
@@ -452,11 +455,11 @@ export async function runAutonomousAgent({
     // Compact session summary
     if (sessionStats) {
       console.log(
-        `\n[Session ${iteration}] ${formatSessionStats(sessionStats, duration)}`
+        `\n[Session ${sessionId}] ${formatSessionStats(sessionStats, duration)}`
       );
     } else {
       console.log(
-        `\n[Session ${iteration}] ${formatDuration(duration)} | failed`
+        `\n[Session ${sessionId}] ${formatDuration(duration)} | failed`
       );
     }
 
@@ -534,87 +537,79 @@ async function runAgentSession(
   );
 
   // Stream and display the response
-  // Using 'any' to handle SDK type variations
+  // SDK Message Types (per official docs):
+  // - assistant: Contains message.content[] with text and tool_use blocks
+  // - result: Final stats (usage, cost, duration) with subtype for success/error
+  // - system: Init info (session_id, tools, model) or compact_boundary
+  // - user: User messages (not typically seen in query response)
+  // - stream_event: Partial messages (only with includePartialMessages: true)
   for await (const message of response) {
     const msg = message as any;
 
     switch (msg.type) {
       case "assistant":
-        // Parse message content - can contain text and tool_use blocks
-        const message = msg.message;
-        if (message && Array.isArray(message.content)) {
-          for (const block of message.content) {
+        // SDKAssistantMessage: contains message.content[] array
+        // Content blocks are either {type: 'text', text} or {type: 'tool_use', name, id, input}
+        const assistantMessage = msg.message;
+        if (assistantMessage && Array.isArray(assistantMessage.content)) {
+          for (const block of assistantMessage.content) {
             if (block.type === "text" && block.text) {
-              // Write to log file instead of console
               log(block.text);
             } else if (block.type === "tool_use") {
-              // Log tool use blocks (these appear before tool_call events)
-              log(`\n[Tool Request: ${block.name}]\n`);
+              // Log tool use request with input
+              log(`\n[Tool: ${block.name}]\n`);
+              if (block.input) {
+                log(`${JSON.stringify(block.input, null, 2)}\n`);
+              }
+
+              // Handle feature_status updates for live console output
+              if (block.name?.endsWith("feature_status") && block.input) {
+                const featureId = block.input.feature_id;
+                const status = block.input.status;
+                const feature = featureLookup[featureId];
+
+                if (feature && status) {
+                  const statusIcon =
+                    status === "completed"
+                      ? "✓"
+                      : status === "in_progress"
+                      ? "→"
+                      : status === "pending"
+                      ? "↻"
+                      : "✗";
+                  console.log(
+                    `  [${statusIcon}] Feature ${featureId}: "${feature.name}" → ${status}`
+                  );
+
+                  if (status === "completed") {
+                    completedCount++;
+                    stats.featuresCompleted = completedCount;
+                  }
+                }
+              }
             }
           }
         }
-        break;
-
-      case "tool_call":
-        // Tool is being executed - log name and full input
-        const toolName = msg.tool_name;
-        const toolInput = msg.input;
-
-        log(`\n[Tool Call: ${toolName}]\n`);
-        log(`Input: ${JSON.stringify(toolInput, null, 2)}\n`);
-
-        // Handle feature_status updates for live console output
-        if (toolName?.endsWith("feature_status") && toolInput) {
-          const featureId = toolInput.feature_id;
-          const status = toolInput.status;
-          const feature = featureLookup[featureId];
-
-          if (feature && status) {
-            const statusIcon =
-              status === "completed"
-                ? "✓"
-                : status === "in_progress"
-                ? "→"
-                : status === "pending"
-                ? "↻"
-                : "✗";
-            // Print to console - this is important status info
-            console.log(
-              `  [${statusIcon}] Feature ${featureId}: "${feature.name}" → ${status}`
-            );
-
-            if (status === "completed") {
-              completedCount++;
-              stats.featuresCompleted = completedCount;
-            }
-          }
-        }
-        break;
-
-      case "tool_result":
-        // Tool execution completed - log name and full result
-        log(`\n[Tool Result: ${msg.tool_name}]\n`);
-        const result = msg.result;
-        if (typeof result === "string") {
-          log(`${result}\n`);
-        } else {
-          log(`${JSON.stringify(result, null, 2)}\n`);
-        }
-        break;
-
-      case "error":
-        console.error(`  [Error] ${msg.error}`);
-        log(`\n[Error] ${msg.error}\n`);
         break;
 
       case "system":
+        // SDKSystemMessage: subtype is 'init' or 'compact_boundary'
         if (msg.subtype === "init") {
-          log(`[Session ID: ${msg.session_id}]\n`);
+          log(`[Session: ${msg.session_id}]\n`);
+          log(`[Model: ${msg.model}]\n`);
+          if (msg.mcp_servers?.length > 0) {
+            const servers = msg.mcp_servers
+              .map((s: any) => `${s.name}(${s.status})`)
+              .join(", ");
+            log(`[MCP: ${servers}]\n`);
+          }
+        } else if (msg.subtype === "compact_boundary") {
+          log(`\n[Compaction: ${msg.compact_metadata?.trigger}, pre_tokens: ${msg.compact_metadata?.pre_tokens}]\n`);
         }
         break;
 
       case "result":
-        // Capture token usage from result message
+        // SDKResultMessage: final stats with subtype for success/error
         if (msg.usage) {
           stats.inputTokens = msg.usage.input_tokens ?? 0;
           stats.outputTokens = msg.usage.output_tokens ?? 0;
@@ -622,12 +617,36 @@ async function runAgentSession(
           stats.cacheWriteTokens = msg.usage.cache_creation_input_tokens ?? 0;
         }
         stats.costUsd = msg.total_cost_usd ?? 0;
-        log(`\n[Result] Cost: $${stats.costUsd.toFixed(2)}`);
-        log(` | Tokens: ${stats.inputTokens} in, ${stats.outputTokens} out`);
+
+        log(`\n${"=".repeat(60)}\n`);
+        log(`[Result: ${msg.subtype}]\n`);
+        log(`Cost: $${stats.costUsd.toFixed(2)} | Turns: ${msg.num_turns ?? 0} | Duration: ${msg.duration_ms ?? 0}ms\n`);
+        log(`Tokens: ${stats.inputTokens} in, ${stats.outputTokens} out`);
         if (stats.cacheReadTokens > 0 || stats.cacheWriteTokens > 0) {
           log(` | Cache: ${stats.cacheWriteTokens} write, ${stats.cacheReadTokens} read`);
         }
         log(`\n`);
+
+        // Log errors if present (error subtypes have errors array)
+        if (msg.errors && msg.errors.length > 0) {
+          console.error(`  [Session Error] ${msg.errors.join("; ")}`);
+          log(`[Errors: ${msg.errors.join("; ")}]\n`);
+        }
+
+        // Log final result text if present (success subtype)
+        if (msg.result) {
+          log(`[Final Result: ${msg.result}]\n`);
+        }
+        break;
+
+      case "user":
+        // SDKUserMessage: typically not seen in query response, but log if present
+        log(`\n[User Message]\n`);
+        break;
+
+      default:
+        // Log unknown message types for debugging
+        log(`\n[Unknown: ${msg.type}] ${JSON.stringify(msg).slice(0, 200)}\n`);
         break;
     }
   }
